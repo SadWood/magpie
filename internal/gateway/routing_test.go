@@ -54,6 +54,43 @@ func TestRouting(t *testing.T) {
 	}
 }
 
+func TestRoutingKeepsModelAllowancesSeparate(t *testing.T) {
+	old := allowances
+	t.Cleanup(func() { allowances = old })
+	allowances = func(string) map[string]provider.Allowance {
+		return map[string]provider.Allowance{
+			"account": {{Used: 25, Model: "grok"}, {Used: 100, Model: "claude"}},
+		}
+	}
+	p := provider.Provider{ID: "cursor", Account: &provider.Account{Agent: "cursor", User: "account"}}
+	for _, routing := range []string{"", provider.LeastUsed} {
+		for _, reverse := range []bool{false, true} {
+			p.Routing = routing
+			cs := []candidate{
+				{p: p, model: "claude-opus-5-5", rest: "cursor#account"},
+				{p: p, model: "grok-4.7-xhigh-fast", rest: "cursor#account"},
+			}
+			if reverse {
+				cs[0], cs[1] = cs[1], cs[0]
+			}
+			got, wg := weigh(p, cs, "group/mixed", provider.Chat)
+			if got[0].model != "grok-4.7-xhigh-fast" {
+				t.Errorf("routing %q, reverse %v: exhausted model goes first: %s", routing, reverse, got[0].model)
+			}
+			for _, c := range got {
+				want := 25.0
+				if c.model == "claude-opus-5-5" {
+					want = 100
+				}
+				w := weighed(c, p, wg, false, provider.Chat)
+				if !w.Known || w.Used != want {
+					t.Errorf("routing %q, reverse %v: %s trace = known %v, used %g; want %g", routing, reverse, c.model, w.Known, w.Used, want)
+				}
+			}
+		}
+	}
+}
+
 // Smart routing keeps the first while it has quota to spare, then goes to
 // whichever has the most; a failure rests as long as it says.
 func TestSmartRouting(t *testing.T) {

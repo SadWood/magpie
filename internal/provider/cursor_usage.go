@@ -1,8 +1,8 @@
 package provider
 
 // How much of a Cursor plan's included usage is gone, as the CLI's own
-// usage view reads it: the dashboard's current period, split into what Auto
-// and Composer used and what the named (API) models did.
+// usage view reads it: the dashboard's current period, split into the
+// Cursor Models and Other Models pools.
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -84,8 +85,9 @@ func cursorSubscriptionUsage(ctx context.Context, plan string) SubscriptionQuota
 // enterprise plan reports spend instead, and gets no windows.
 func cursorWindows(ctx context.Context, token string) ([]QuotaWindow, error) {
 	var data struct {
-		BillingCycleEnd string `json:"billingCycleEnd"` // epoch millis
-		PlanUsage       *struct {
+		BillingCycleEnd  string   `json:"billingCycleEnd"` // epoch millis
+		AutoBucketModels []string `json:"autoBucketModels"`
+		PlanUsage        *struct {
 			Auto  float64 `json:"autoPercentUsed"`
 			API   float64 `json:"apiPercentUsed"`
 			Total float64 `json:"totalPercentUsed"`
@@ -119,10 +121,33 @@ func cursorWindows(ctx context.Context, token string) ([]QuotaWindow, error) {
 		resets = &t
 	}
 	u := data.PlanUsage
+	inCursorPool := func(model string) bool {
+		if model == "auto" {
+			model = "default" // the CLI's Auto is default in Cursor's API
+		}
+		return slices.Contains(data.AutoBucketModels, model) || cursorFirstPartyModel(model)
+	}
 	// the two pools fit the line; the total goes in its tooltip
 	return []QuotaWindow{
-		{Name: "Auto + Composer", Used: u.Auto, ResetsAt: resets},
-		{Name: "API", Used: u.API, ResetsAt: resets},
-		{Name: "Total", Used: u.Total, ResetsAt: resets},
+		{Name: "Cursor Models", Used: u.Auto, ResetsAt: resets, matches: inCursorPool},
+		{Name: "Other Models", Used: u.API, ResetsAt: resets, matches: func(model string) bool { return !inCursorPool(model) }},
+		{Name: "Total", Used: u.Total, ResetsAt: resets, Aside: true},
 	}, nil
+}
+
+// Cursor's autoBucketModels can lag model releases: it still omitted Grok
+// 4.6/4.7 when the published Cursor Models pool already included them.
+// Keep those documented families alongside the server's exact model list.
+// See https://cursor.com/docs/models-and-pricing.
+func cursorFirstPartyModel(model string) bool {
+	model = strings.TrimPrefix(model, "cursor-")
+	if model == "default" || strings.HasPrefix(model, "composer-") {
+		return true
+	}
+	for _, base := range []string{"grok-4.5", "grok-4.6", "grok-4.7"} {
+		if model == base || strings.HasPrefix(model, base+"-") {
+			return true
+		}
+	}
+	return false
 }

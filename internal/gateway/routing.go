@@ -266,9 +266,17 @@ func route(p provider.Provider, cs []candidate, model string, from provider.Prot
 // its allowance each account has used and when that renews, and the tokens
 // each served lately. The routing trace shows the same.
 type weighing struct {
-	lefts map[string]left // the accounts the vendor said what they have left of
+	lefts map[allowanceKey]left // the allowance of each account and model
 
 	tokens map[string]float64 // least used: tokens each served lately
+}
+
+type allowanceKey struct {
+	rest, model string
+}
+
+func (c candidate) allowanceKey() allowanceKey {
+	return allowanceKey{c.rest, c.model}
 }
 
 type left struct {
@@ -278,8 +286,8 @@ type left struct {
 
 // learns: c is a subscription whose allowance isn't known yet, of an agent
 // that tells it as it answers (Claude Code's rate_limit_event).
-func learns(c candidate, lefts map[string]left) bool {
-	_, known := lefts[c.rest]
+func learns(c candidate, lefts map[allowanceKey]left) bool {
+	_, known := lefts[c.allowanceKey()]
 	return !known && c.p.Account != nil && c.p.Account.Agent == "claude"
 }
 
@@ -293,7 +301,7 @@ func weigh(p provider.Provider, cs []candidate, model string, from provider.Prot
 	// each account's own agent's: a group weighs accounts of several
 	known := map[string]map[string]provider.Allowance{}
 	now := time.Now()
-	wg.lefts = map[string]left{}
+	wg.lefts = map[allowanceKey]left{}
 	for _, c := range cs {
 		if c.p.Account == nil {
 			continue
@@ -304,11 +312,11 @@ func weigh(p provider.Provider, cs []candidate, model string, from provider.Prot
 		}
 		if a, ok := known[ag][c.p.Account.User]; ok {
 			u, r := a.For(c.model, now)
-			wg.lefts[c.rest] = left{u, r} // one not known counts as unused
+			wg.lefts[c.allowanceKey()] = left{u, r} // one not known counts as unused
 		}
 	}
 	lefts := wg.lefts
-	shareOf := func(c candidate) float64 { return lefts[c.rest].used }
+	shareOf := func(c candidate) float64 { return lefts[c.allowanceKey()].used }
 	switch p.Routing {
 	case "":
 		// of those with quota to spare, the one whose allowance renews
@@ -339,7 +347,7 @@ func weigh(p provider.Provider, cs []candidate, model string, from provider.Prot
 			if li, lj := learns(fine[i], lefts), learns(fine[j], lefts); li != lj {
 				return li
 			}
-			ri, rj := lefts[fine[i].rest].renews, lefts[fine[j].rest].renews
+			ri, rj := lefts[fine[i].allowanceKey()].renews, lefts[fine[j].allowanceKey()].renews
 			for k := 0; k < len(ri) || k < len(rj); k++ {
 				var a, b time.Time // to the hour, so a few minutes don't reorder
 				if k < len(ri) {

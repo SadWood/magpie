@@ -32,6 +32,8 @@ type QuotaWindow struct {
 	Span  time.Duration `json:"-"`
 	Model string        `json:"-"`
 	Aside bool          `json:"-"`
+	// matches further scopes pools whose membership isn't one model word.
+	matches func(string) bool
 }
 
 // SubscriptionQuota is provider-reported allowance usage. This is separate

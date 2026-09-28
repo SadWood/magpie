@@ -164,7 +164,7 @@ func weighed(c candidate, p provider.Provider, wg weighing, fallback bool, from 
 	default:
 		w.Kind = "provider"
 	}
-	if l, ok := wg.lefts[c.rest]; ok {
+	if l, ok := wg.lefts[c.allowanceKey()]; ok {
 		w.Known, w.Used, w.Renews = true, l.used, l.renews
 	} else if wg.lefts != nil {
 		w.Learns = learns(c, wg.lefts)

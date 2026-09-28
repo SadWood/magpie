@@ -60,10 +60,15 @@ type Allowance []Limit
 
 // Limit is one window of an allowance.
 type Limit struct {
-	Used   float64       // share used, 0–100
-	Resets time.Time     // zero when not known
-	Span   time.Duration // how long the window runs; zero when not known
-	Model  string        // the only models it counts, by a word in their ids
+	Used    float64       // share used, 0–100
+	Resets  time.Time     // zero when not known
+	Span    time.Duration // how long the window runs; zero when not known
+	Model   string        // the only models it counts, by a word in their ids
+	matches func(string) bool
+}
+
+func (l Limit) applies(model string) bool {
+	return (l.Model == "" || strings.Contains(model, l.Model)) && (l.matches == nil || l.matches(model))
 }
 
 // For is what an allowance leaves a request for model at now: the share
@@ -74,7 +79,7 @@ func (a Allowance) For(model string, now time.Time) (used float64, renews []time
 	model = strings.ToLower(model)
 	var ls []Limit
 	for _, l := range a {
-		if l.Model != "" && !strings.Contains(model, l.Model) {
+		if !l.applies(model) {
 			continue
 		}
 		if !l.Resets.IsZero() && !l.Resets.After(now) {
@@ -101,7 +106,7 @@ func (a Allowance) Full(model string, share float64, now time.Time) time.Time {
 	model = strings.ToLower(model)
 	var t time.Time
 	for _, l := range a {
-		if (l.Model == "" || strings.Contains(model, l.Model)) && l.Used >= share && l.Resets.After(now) && l.Resets.After(t) {
+		if l.applies(model) && l.Used >= share && l.Resets.After(now) && l.Resets.After(t) {
 			t = l.Resets
 		}
 	}
@@ -183,7 +188,7 @@ func allowanceOf(ws []QuotaWindow, now time.Time) Allowance {
 		if w.Aside {
 			continue
 		}
-		l := Limit{Used: w.Used, Span: w.Span, Model: w.Model}
+		l := Limit{Used: w.Used, Span: w.Span, Model: w.Model, matches: w.matches}
 		switch {
 		case w.ResetsAt != nil:
 			l.Resets = *w.ResetsAt
