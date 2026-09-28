@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,8 +17,14 @@ import (
 
 // wbAuthFile is where WorkBuddy keeps its signed-in session under a temp home.
 func wbAuthFile(home string) string {
-	// mirrors wbAuthPath's darwin layout; the test runs on darwin
-	return filepath.Join(home, "Library", "Application Support", "CodeBuddyExtension", "Data", "Public", "auth", "workbuddy-desktop.info")
+	base := filepath.Join(home, ".local", "share")
+	switch runtime.GOOS {
+	case "darwin":
+		base = filepath.Join(home, "Library", "Application Support")
+	case "windows":
+		base = filepath.Join(home, "AppData", "Local")
+	}
+	return filepath.Join(base, "CodeBuddyExtension", "Data", "Public", "auth", "workbuddy-desktop.info")
 }
 
 // WorkBuddy's own account is read from its auth store; a second, signed in
