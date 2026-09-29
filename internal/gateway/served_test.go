@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/usage"
 )
 
 // servedBy is a vendor that answers in its protocol, streamed when asked,
@@ -141,6 +143,11 @@ func TestServedModelRecorded(t *testing.T) {
 					if calls := s.Recent(); len(calls) == 0 || calls[0].Usage.Served != c.served {
 						t.Errorf("request log: %+v", calls)
 					}
+					// the usage ledger has the model asked for, the one sent
+					// and the one that answered
+					if u := usage.Load(time.Time{}); len(u) != 1 || u[0].Requested != "fake/sol" || u[0].Model != "sol" || u[0].Served != c.served {
+						t.Errorf("usage %+v", u)
+					}
 				})
 			}
 		}
@@ -163,6 +170,9 @@ func TestServedModelUnnamed(t *testing.T) {
 	s.Handler().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"fake/sol","messages":[{"role":"user","content":"hi"}]}`)))
 	if r := lastRoute(s); rec.Code != 200 || r.Served != "" || r.Swapped || r.Tries[0].Swapped {
 		t.Fatalf("%d, route %+v", rec.Code, r)
+	}
+	if u := usage.Load(time.Time{}); len(u) != 1 || u[0].Requested != "fake/sol" || u[0].Served != "" {
+		t.Errorf("usage %+v", u)
 	}
 }
 

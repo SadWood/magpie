@@ -23,16 +23,22 @@ import (
 
 // Record is one call.
 type Record struct {
-	Time       time.Time `json:"t"`
-	Agent      string    `json:"agent"` // magpie agent id, or the client's product name
-	Provider   string    `json:"provider"`
-	Host       string    `json:"host,omitempty"` // where the call went: provider.Where then
-	Model      string    `json:"model"`          // the provider's model id
-	Input      int       `json:"in"`
-	Output     int       `json:"out"`
-	CacheRead  int       `json:"cache_read,omitempty"`
-	CacheWrite int       `json:"cache_write,omitempty"`
-	Reasoning  int       `json:"reasoning,omitempty"`
+	Time     time.Time `json:"t"`
+	Agent    string    `json:"agent"` // magpie agent id, or the client's product name
+	Provider string    `json:"provider"`
+	Host     string    `json:"host,omitempty"` // where the call went: provider.Where then
+	Model    string    `json:"model"`          // the provider's model id
+	// Requested is the model id the agent asked for (a magpie alias, a
+	// routing group, provider/model…), and Served the model the vendor's
+	// reply says answered, when it named one: a ledger to set beside the
+	// vendor's own bill. Neither is in a record written before they were.
+	Requested  string `json:"req,omitempty"`
+	Served     string `json:"served,omitempty"`
+	Input      int    `json:"in"`
+	Output     int    `json:"out"`
+	CacheRead  int    `json:"cache_read,omitempty"`
+	CacheWrite int    `json:"cache_write,omitempty"`
+	Reasoning  int    `json:"reasoning,omitempty"`
 	// Effort is the reasoning the model was asked for — a routing group's
 	// pick for the turn, or the agent's own — as it takes it; "" for none
 	Effort string `json:"effort,omitempty"`
@@ -346,27 +352,7 @@ func summarize(p Period, now time.Time, recs []Record) Summary {
 		}
 	}
 
-	prices := map[string]*catalog.Price{}
-	priceOf := func(r Record) *catalog.Price {
-		k := r.Provider + "/" + r.Model
-		if pr, ok := prices[k]; ok {
-			return pr
-		}
-		var pr *catalog.Price
-		for _, p := range provider.All() {
-			if p.ID == r.Provider {
-				for _, c := range p.Catalogs() {
-					if v, ok := catalog.PriceOf(c, r.Model); ok {
-						pr = &v
-						break
-					}
-				}
-				break
-			}
-		}
-		prices[k] = pr
-		return pr
-	}
+	priceOf := pricer()
 	// the places each provider id went in the period, and goes now
 	hosts := map[string]map[string]bool{}
 	for _, r := range recs {

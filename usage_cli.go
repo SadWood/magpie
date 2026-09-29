@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,9 +37,20 @@ func loadCostCurrency() {
 }
 
 // usageCmd: `magpie usage [today|7d|30d|all]` — tokens and cost per agent,
-// model and session
+// model and session; with --csv, every request of the period as CSV, one
+// row each, to set beside a vendor's bill
 func usageCmd(args []string) error {
-	loadCostCurrency()
+	return usageTo(os.Stdout, args)
+}
+
+func usageTo(out io.Writer, args []string) error {
+	asCSV := false
+	if i := slices.Index(args, "--csv"); i > 0 {
+		asCSV, args = true, slices.Delete(slices.Clone(args), i, i+1)
+	}
+	if len(args) > 2 {
+		return fmt.Errorf("usage: magpie usage [--csv] [today|7d|30d|all]")
+	}
 	period := stats.Month
 	if len(args) > 1 {
 		switch strings.ToLower(args[1]) {
@@ -49,9 +63,14 @@ func usageCmd(args []string) error {
 		case "all":
 			period = stats.All
 		default:
-			return fmt.Errorf("usage: magpie usage [today|7d|30d|all]")
+			return fmt.Errorf("usage: magpie usage [--csv] [today|7d|30d|all]")
 		}
 	}
+	if asCSV {
+		rows, _, _ := stats.Ledger(period, stats.Filter{})
+		return stats.WriteCSV(out, rows)
+	}
+	loadCostCurrency()
 	s := stats.Summarize(period)
 	title := map[stats.Period]string{stats.Today: "today", stats.Week: "last 7 days", stats.Month: "last 30 days", stats.All: "all time"}[s.Period]
 	if s.Calls == 0 {

@@ -1,12 +1,19 @@
 package gui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/yetone/magpie/internal/agent"
+	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/usage"
 )
@@ -60,7 +67,82 @@ func usageState(p usage.Period) usageJSON {
 	return out
 }
 
-func usageRoutes(mux *http.ServeMux) {
+func periodOf(s string) usage.Period {
+	switch p := usage.Period(s); p {
+	case usage.Today, usage.Week, usage.Month, usage.All:
+		return p
+	}
+	return usage.Month
+}
+
+func ledgerFilter(q url.Values) usage.Filter {
+	return usage.Filter{Agent: q.Get("agent"), Failed: q.Get("failed") == "1", Query: q.Get("q")}
+}
+
+// ledgerRow is a usage.Row with the names the page shows it by.
+type ledgerRow struct {
+	usage.Row
+	AgentName    string `json:"agentName"`
+	Icon         string `json:"icon"` // the agent's
+	ProviderName string `json:"providerName"`
+}
+
+type ledgerJSON struct {
+	Period usage.Period `json:"period"`
+	Rows   []ledgerRow  `json:"rows"`
+	Offset int          `json:"offset"`
+	Total  int          `json:"total"` // the rows the filter keeps, on every page
+	usage.Totals
+	// Agents: the agents with calls in the period, for the filter
+	Agents []ledgerAgent `json:"agents"`
+}
+
+type ledgerAgent struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Icon string `json:"icon"`
+}
+
+// ledgerPage is one page of the ledger: limit rows (100 when none is
+// given, 500 at most) from offset.
+func ledgerPage(p usage.Period, f usage.Filter, offset, limit int) ledgerJSON {
+	rows, sum, ids := usage.Ledger(p, f)
+	if limit <= 0 {
+		limit = 100
+	}
+	limit = min(limit, 500)
+	offset = max(0, min(offset, len(rows)))
+	page := rows[offset:min(len(rows), offset+limit)]
+	agents := map[string]*agent.Agent{}
+	for _, a := range agent.Clients() {
+		agents[a.ID] = a
+	}
+	names := map[string]string{}
+	for _, pr := range provider.All() {
+		names[pr.ID] = pr.Name
+	}
+	who := func(id string) ledgerAgent {
+		if a := agents[id]; a != nil {
+			return ledgerAgent{ID: id, Name: a.Name, Icon: a.Icon}
+		}
+		return ledgerAgent{ID: id, Name: id, Icon: "generic"}
+	}
+	out := ledgerJSON{Period: p, Rows: make([]ledgerRow, 0, len(page)), Offset: offset, Total: len(rows), Totals: sum, Agents: []ledgerAgent{}}
+	for _, r := range page {
+		a := who(r.Agent)
+		lr := ledgerRow{Row: r, AgentName: a.Name, Icon: a.Icon, ProviderName: names[r.Provider]}
+		if lr.ProviderName == "" {
+			lr.ProviderName = r.Provider
+		}
+		out.Rows = append(out.Rows, lr)
+	}
+	for _, id := range ids {
+		out.Agents = append(out.Agents, who(id))
+	}
+	return out
+}
+
+func usageRoutes(mux *http.ServeMux, w Windows) {
 	mux.HandleFunc("GET /api/usage", func(rw http.ResponseWriter, r *http.Request) {
 		p := usage.Period(r.URL.Query().Get("period"))
 		switch p {
@@ -69,6 +151,48 @@ func usageRoutes(mux *http.ServeMux) {
 			p = usage.Month
 		}
 		writeJSON(rw, usageState(p))
+	})
+	// the ledger: the period's calls, newest first, a page at a time
+	mux.HandleFunc("GET /api/usage/requests", func(rw http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		offset, _ := strconv.Atoi(q.Get("offset"))
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		writeJSON(rw, ledgerPage(periodOf(q.Get("period")), ledgerFilter(q), offset, limit))
+	})
+	// the same CSV to a browser (magpie web), which saves it itself
+	mux.HandleFunc("GET /api/usage/requests.csv", func(rw http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		p := periodOf(q.Get("period"))
+		rows, _, _ := usage.Ledger(p, ledgerFilter(q))
+		rw.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		rw.Header().Set("Content-Disposition", `attachment; filename="magpie-requests-`+string(p)+"-"+time.Now().Format("2006-01-02")+`.csv"`)
+		usage.WriteCSV(rw, rows)
+	})
+	// the rows the ledger shows, all its pages, as a CSV in Downloads
+	mux.HandleFunc("POST /api/usage/requests/export", func(rw http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		p := periodOf(q.Get("period"))
+		rows, _, _ := usage.Ledger(p, ledgerFilter(q))
+		var b bytes.Buffer
+		if err := usage.WriteCSV(&b, rows); err != nil {
+			fail(rw, err)
+			return
+		}
+		dir := downloads()
+		stamp := "magpie-requests-" + string(p) + "-" + time.Now().Format("2006-01-02")
+		name := filepath.Join(dir, stamp+".csv")
+		for i := 2; ; i++ { // never over an earlier one
+			if _, err := os.Stat(name); err != nil {
+				break
+			}
+			name = filepath.Join(dir, fmt.Sprintf("%s-%d.csv", stamp, i))
+		}
+		if err := edit.WriteAtomic(name, b.Bytes()); err != nil {
+			fail(rw, err)
+			return
+		}
+		_ = w.OpenFolder(dir) // saved either way; the path is in the answer
+		writeJSON(rw, map[string]any{"path": tilde(name), "rows": len(rows)})
 	})
 	// The subscriptions' quotas, the plans' bought with a key, and the
 	// keys' balances come from the
