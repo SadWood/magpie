@@ -89,10 +89,18 @@ stripe; a daily warm-up's time field only while it is on; each control
 posting the setting it did, with the page scrolled and left where it was;
 the WorkBuddy group only with an account signed in; in English and Chinese.
 
+`update-check.test.cjs` checks the version row: the button stays, dimmed,
+through a check, a second click asks nothing, and the answer puts it back.
+A read still out cannot draw "checking" over that answer. A row drawn again
+while the check runs keeps the button and catches up when the check answers.
+A failed check gives the button back, and a check already under way shows
+the button without starting another. The page stays where it was. English
+and Chinese.
+
 With Node.js and Playwright available:
 
 ```sh
-node --test internal/gui/tests/menu-scroll.test.cjs internal/gui/tests/click-scroll.test.cjs internal/gui/tests/panel-fold.test.cjs internal/gui/tests/panel-routing.test.cjs internal/gui/tests/gateway-fold.test.cjs internal/gui/tests/routing-kind.test.cjs internal/gui/tests/balance-fix.test.cjs internal/gui/tests/cli-update.test.cjs internal/gui/tests/login-import.test.cjs internal/gui/tests/agy-launch.test.cjs internal/gui/tests/currency.test.cjs
+node --test internal/gui/tests/menu-scroll.test.cjs internal/gui/tests/click-scroll.test.cjs internal/gui/tests/panel-fold.test.cjs internal/gui/tests/panel-routing.test.cjs internal/gui/tests/gateway-fold.test.cjs internal/gui/tests/routing-kind.test.cjs internal/gui/tests/balance-fix.test.cjs internal/gui/tests/cli-update.test.cjs internal/gui/tests/login-import.test.cjs internal/gui/tests/agy-launch.test.cjs internal/gui/tests/currency.test.cjs internal/gui/tests/update-check.test.cjs
 ```
 
 If Playwright is installed outside the repository, set `NODE_PATH` to the

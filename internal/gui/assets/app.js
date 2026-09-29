@@ -6624,18 +6624,53 @@ function renderLAN(s) {
 
 // renderUpdate fills in the version row: whether a newer magpie is out.
 // The app checks and downloads on its own, so usually the row just offers
-// the restart; a check can also be asked for.
+// the restart; a check can also be asked for. That check leaves the button
+// where it is, dimmed, and a second click does nothing. A read still out
+// from before the answer is not drawn over it. A row drawn again reads the
+// current state, and keeps asking while a check or a download is under way.
+let updateBusy = false;
+const updateSeq = new WeakMap();
+
 async function renderUpdate(r, u) {
-  u = u || await api("update").catch(() => null);
-  if (!u || !r.isConnected) return;
+  const seq = updateSeq.get(r) || 0;
+  if (u == null) {
+    u = await api("update").catch(() => null);
+    if (!u || !r.isConnected || (updateSeq.get(r) || 0) !== seq) return;
+  } else if (!r.isConnected) return;
   const who = r.querySelector(".who"), val = r.querySelector(".val");
   const sub = who.querySelector(".sub") || who.appendChild(el("div", "sub"));
   sub.title = "";
   for (const b of val.querySelectorAll("button")) b.remove();
-  const btn = (label, fn) => { const b = el("button", "text", label); b.onclick = fn; val.append(b); };
+  const btn = (label, fn, dim) => {
+    const b = el("button", "text" + (dim ? " busy" : ""), label);
+    if (dim) b.disabled = true;
+    b.onclick = fn;
+    val.append(b);
+    return b;
+  };
+  // one check at a time. The button stays; the click only dims it until the
+  // answer, and a second click is ignored rather than drawn as "checking".
   const check = async () => {
+    if (updateBusy) return;
+    updateBusy = true;
+    const mine = (updateSeq.get(r) || 0) + 1;
+    updateSeq.set(r, mine);
     sub.textContent = t("Checking for updates…");
-    renderUpdate(r, await api("update/check", {}).catch((e) => ({ state: "error", error: e.message })));
+    for (const b of val.querySelectorAll("button")) {
+      b.disabled = true;
+      b.classList.add("busy");
+    }
+    let next;
+    try { next = await api("update/check", {}); }
+    catch (e) { next = { state: "error", error: e.message }; }
+    updateBusy = false;
+    if (!r.isConnected || (updateSeq.get(r) || 0) !== mine) return;
+    updateSeq.set(r, mine + 1); // the answer stands; a read still out is older
+    renderUpdate(r, next);
+  };
+  const again = (ms) => {
+    const seen = updateSeq.get(r) || 0;
+    setTimeout(() => { if (r.isConnected && (updateSeq.get(r) || 0) === seen) renderUpdate(r); }, ms);
   };
   switch (u.state) {
     case "ready":
@@ -6657,11 +6692,12 @@ async function renderUpdate(r, u) {
       sub.textContent = t("Downloading {v}…", { v: u.latest });
       if (u.total) sub.textContent += " " + Math.floor((u.done / u.total) * 100) + "% · " + t("{done} of {total} MB", { done: (u.done / 1e6).toFixed(1), total: (u.total / 1e6).toFixed(1) });
       else if (u.done) sub.textContent += " " + t("{done} MB", { done: (u.done / 1e6).toFixed(1) });
-      setTimeout(() => renderUpdate(r), 700);
+      again(700);
       break;
     case "checking":
       sub.textContent = t("Checking for updates…");
-      setTimeout(() => renderUpdate(r), 1000);
+      btn(t("Check"), check, true);
+      again(1000);
       break;
     case "latest":
       sub.textContent = t("Up to date");
