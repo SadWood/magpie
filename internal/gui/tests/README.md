@@ -1051,6 +1051,8 @@ The same test covers cached Claude snapshots on Usage, the tray's Allowances
 tab and the provider's account editor: historical percentages stay dated
 and visibly say when an expired window's current allowance is unknown;
 past reset times say they have passed. A fresh reading clears those markers.
+The tray's cached subscription date is as short as a balance card's, while
+expired-window warnings remain visible and the tooltip keeps the explanation.
 English and Chinese, Chromium and WebKit.
 `panel-effort.test.cjs` opens a row in the tray panel whose effort is not one
 of the levels offered (omp at auto, an agent with none set): the slider shows
