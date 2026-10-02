@@ -1012,6 +1012,11 @@ for when the reader opens Usage or presses Refresh (the header's, the only
 one since #486): opening the page and Refresh load `usage/quotas?asked=1`, the timed reload and the window coming
 back don't; an asked load isn't swallowed by one already on its way.
 Chromium and WebKit.
+The same test covers cached Claude snapshots on Usage, the tray's Allowances
+tab and the provider's account editor: historical percentages stay dated
+and visibly say when an expired window's current allowance is unknown;
+past reset times say they have passed. A fresh reading clears those markers.
+English and Chinese, Chromium and WebKit.
 `panel-effort.test.cjs` opens a row in the tray panel whose effort is not one
 of the levels offered (omp at auto, an agent with none set): the slider shows
 it as it is ("auto", "default"; 自动 in Chinese) at a stop of its own, a touch

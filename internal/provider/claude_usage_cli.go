@@ -62,8 +62,16 @@ func claudeUsageTemporary(err error) bool {
 // year.
 func parseClaudeUsage(text string, now time.Time) ([]QuotaWindow, error) {
 	out := []QuotaWindow{}
+	text = strings.TrimSpace(ansi.ReplaceAllString(text, ""))
+	lines := strings.Split(text, "\n")
+	// Account errors take precedence over notices (and partial readings).
+	for _, line := range lines {
+		if claudeUsageDenied.MatchString(line) {
+			return out, errors.New("Claude Code's /usage told no allowance: " + clipLine(strings.TrimSpace(line)))
+		}
+	}
 	const week = 7 * 24 * time.Hour
-	for _, line := range strings.Split(text, "\n") {
+	for _, line := range lines {
 		m := claudeUsageLineRE.FindStringSubmatch(strings.TrimSpace(line))
 		if m == nil {
 			continue
@@ -88,16 +96,12 @@ func parseClaudeUsage(text string, now time.Time) ([]QuotaWindow, error) {
 		out = append(out, w)
 	}
 	if len(out) == 0 {
-		if s := strings.TrimSpace(text); s == "" || s == "You are currently using your subscription to power your Claude Code usage" {
+		if text == "" || slices.ContainsFunc(lines, func(line string) bool {
+			return strings.TrimSuffix(strings.TrimSpace(line), ".") == "You are currently using your subscription to power your Claude Code usage"
+		}) {
 			return out, errClaudeUsageUnavailable
 		}
-		first, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
-		for _, line := range strings.Split(text, "\n") {
-			if claudeUsageDenied.MatchString(line) {
-				first = strings.TrimSpace(line) // don't hide an account error behind an earlier timeout
-				break
-			}
-		}
+		first, _, _ := strings.Cut(text, "\n")
 		return out, errors.New("Claude Code's /usage told no allowance: " + clipLine(first))
 	}
 	return out, nil

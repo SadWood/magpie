@@ -74,7 +74,7 @@ func TestClaudeUsageUnavailableKeepsAccountReading(t *testing.T) {
 	snapshot := lastQuota{At: at, Q: SubscriptionQuota{Provider: "claude", Plan: "max", Windows: []QuotaWindow{
 		{Name: "5 hours", Used: 40, ResetsAt: &reset},
 	}}}
-	for _, text := range []string{subscriptionNotice, ""} {
+	for _, text := range []string{subscriptionNotice, "", subscriptionNotice + ".", "\x1b[32m" + subscriptionNotice + "\x1b[0m", subscriptionNotice + "\nWhat's contributing to your limits usage?"} {
 		t.Run(text, func(t *testing.T) {
 			_, card := claudeUsageCards(t, text, &snapshot)
 			for range 2 { // cached failure must not turn an old reading into a new one
@@ -129,23 +129,46 @@ func TestClaudeUsageUnavailablePreservesExpiredReading(t *testing.T) {
 }
 
 func TestClaudeUsageExpiredReadingDoesNotSwitchAccounts(t *testing.T) {
-	reset := time.Now().Add(-time.Hour)
-	snapshot := lastQuota{At: time.Now().Add(-2 * time.Hour), Q: SubscriptionQuota{Provider: "claude", Windows: []QuotaWindow{{Name: "5 hours", Used: 100, ResetsAt: &reset}}}}
-	claudeUsageCards(t, subscriptionNotice, &snapshot)
-	loginsMu.Lock()
-	ls := upsertLogin(readLogins(), savedLogin{Agent: "claude", User: "b@example.com", Plan: "max", On: true, Seen: time.Now().UTC(),
-		Auth: mustJSONRaw(t, map[string]any{"claudeAiOauth": map[string]any{"accessToken": "sk-ant-oat01-b", "refreshToken": "sk-ant-ort01-b",
-			"expiresAt": time.Now().Add(time.Hour).UnixMilli(), "subscriptionType": "max", "scopes": []string{"user:inference", "user:profile"}}}),
-		Profile: mustJSONRaw(t, map[string]any{"emailAddress": "b@example.com", "accountUuid": "u-b"})})
-	err := writeLogins(ls)
-	loginsMu.Unlock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	NoteClaudeLimits("b@example.com", []ClaudeLimit{{Kind: "five_hour", Used: .1}})
-	AskClaudeUsage()
-	if from, to, _, ok := NextLogin(context.Background(), "claude"); ok {
-		t.Fatalf("expired historical usage must not move the account: %s to %s", from, to)
+	past, future := time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour)
+	for _, tt := range []struct {
+		name       string
+		windows    []QuotaWindow
+		back, move bool
+	}{
+		{"only expired", []QuotaWindow{{Name: "5 hours", Used: 100, ResetsAt: &past}}, false, false},
+		{"return to account with room", []QuotaWindow{{Name: "5 hours", Used: 100, ResetsAt: &past}}, true, true},
+		{"weekly still spent", []QuotaWindow{{Name: "5 hours", Used: 100, ResetsAt: &past}, {Name: "7 days", Used: 99, ResetsAt: &future}}, false, true},
+		{"session still spent", []QuotaWindow{{Name: "5 hours", Used: 99, ResetsAt: &future}, {Name: "7 days", Used: 100, ResetsAt: &past}}, false, true},
+		{"remaining window has room", []QuotaWindow{{Name: "5 hours", Used: 100, ResetsAt: &past}, {Name: "7 days", Used: 20, ResetsAt: &future}}, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := lastQuota{At: time.Now().Add(-2 * time.Hour), Q: SubscriptionQuota{Provider: "claude", Windows: tt.windows}}
+			_, card := claudeUsageCards(t, subscriptionNotice, &snapshot)
+			loginsMu.Lock()
+			ls := upsertLogin(readLogins(), savedLogin{Agent: "claude", User: "b@example.com", Plan: "max", On: true, Seen: time.Now().UTC(),
+				Auth: mustJSONRaw(t, map[string]any{"claudeAiOauth": map[string]any{"accessToken": "sk-ant-oat01-b", "refreshToken": "sk-ant-ort01-b",
+					"expiresAt": time.Now().Add(time.Hour).UnixMilli(), "subscriptionType": "max", "scopes": []string{"user:inference", "user:profile"}}}),
+				Profile: mustJSONRaw(t, map[string]any{"emailAddress": "b@example.com", "accountUuid": "u-b"})})
+			err := writeLogins(ls)
+			loginsMu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.back {
+				setLoginReturn("claude", loginReturn{Back: "b@example.com", To: "a@example.com"})
+			}
+			NoteClaudeLimits("b@example.com", []ClaudeLimit{{Kind: "five_hour", Used: .1, ResetsAt: future.Unix()}})
+			AskClaudeUsage()
+			from, to, back, ok := NextLogin(context.Background(), "claude")
+			if ok != tt.move || tt.move && (from != "a@example.com" || to != "b@example.com" || back != tt.back) {
+				t.Fatalf("move=%v back=%v: got %q→%q back=%v ok=%v", tt.move, tt.back, from, to, back, ok)
+			}
+			// Choosing an account must not erase the snapshot used for display.
+			q := card()
+			if q.AsOf == nil || len(q.Windows) != len(tt.windows) || q.Windows[0].Used != tt.windows[0].Used || !q.Windows[0].ResetsAt.Equal(*tt.windows[0].ResetsAt) {
+				t.Fatalf("account selection changed the displayed reading: %+v", q)
+			}
+		})
 	}
 }
 
@@ -159,6 +182,9 @@ func TestClaudeUsageFailureDoesNotHideAccountErrors(t *testing.T) {
 		"Claude Code: network timeout\nHTTP 401 Unauthorized",
 		"You've hit your session limit · resets 3:30am (UTC)",
 		subscriptionNotice + "\nAuthentication failed",
+		"\x1b[32m" + subscriptionNotice + ".\x1b[0m\n\x1b[31mAuthentication failed\x1b[0m",
+		subscriptionNotice + ".\nHTTP 401 Unauthorized",
+		"Current session: 40% used\nHTTP 401 Unauthorized",
 		"You are currently using your overages to power your Claude Code usage. We will automatically switch you back to your subscription rate limits when they reset",
 	} {
 		t.Run(text, func(t *testing.T) {

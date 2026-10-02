@@ -29,6 +29,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -100,19 +101,21 @@ func NextLogin(ctx context.Context, agent string) (from, to string, back, ok boo
 		return "", "", false, false
 	}
 	u := LoginUsage(ctx, agent)
-	if q := u[from]; q.Provider == "claude" && q.AsOf != nil {
-		for _, w := range q.Windows {
-			if w.ResetsAt != nil && !w.ResetsAt.After(time.Now()) {
-				return "", "", false, false // historical usage doesn't tell whether to move now
-			}
-		}
-	}
 	if first != nil && first.On && first.Lapsed == "" {
 		if q, known := u[first.User]; known && q.Error == "" && !usedPast(q, backShare) {
 			return from, first.User, true, true
 		}
 	}
-	if q, known := u[from]; !known || q.Error != "" || !spent(q) {
+	q, known := u[from]
+	if q.Provider == "claude" && q.AsOf != nil {
+		// An expired cached window cannot say whether this account is spent
+		// now. Keep other windows and the stored historical reading intact.
+		now := time.Now()
+		q.Windows = slices.DeleteFunc(slices.Clone(q.Windows), func(w QuotaWindow) bool {
+			return w.ResetsAt != nil && !w.ResetsAt.After(now)
+		})
+	}
+	if !known || q.Error != "" || !spent(q) {
 		return "", "", false, false
 	}
 	for _, l := range spares {

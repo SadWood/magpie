@@ -1303,6 +1303,8 @@ const I18N = {
     "As of {when} — couldn't be read just now": "截至 {when}，暂时无法获取最新额度",
     "A cached window has expired; current allowance is unknown": "缓存中有窗口已过期，其当前额度未知",
     "As of {when}": "截至 {when}",
+    "Reset time passed": "重置时间已过",
+    "Reset time passed {when}": "重置时间已过 {when}",
     "Hide allowances": "收起额度",
     "Show allowances": "展开额度",
     "Signed out — add this account again to use it": "登录已失效，请重新添加此账号",

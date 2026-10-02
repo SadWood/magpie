@@ -6997,6 +6997,10 @@ function accountQuota(data, user) {
     return line;
   }
   const q = data[user];
+  if (q?.asOf && !q.error) {
+    line.classList.add("stale");
+    line.append(el("span", "aq-asof", asOfText(q)));
+  }
   // an account on no plan says so, whatever else can be read of it
   const noPlan = q?.plan === "No plan" ? [t("No plan")] : [];
   if (q && !q.error && !q.windows?.length && q.balance) {
@@ -7025,8 +7029,8 @@ function accountQuota(data, user) {
     m.append(el("span", "aq-n", t(w.name)), track, el("b", "", quotaText(w)));
     if (w.resetsAt) {
       const at = new Date(w.resetsAt);
-      m.title = t("Resets {when}", { when: at.toLocaleString() });
-      if (used >= 80) m.append(el("span", "aq-r", t("resets {in}", { in: untilText(at) })));
+      m.title = resetText(at, at.toLocaleString());
+      if (used >= 80) m.append(el("span", "aq-r", resetInText(at)));
     }
     if (w.tiers) m.title = tiersText(w);
     line.append(m);
@@ -7057,7 +7061,7 @@ function poolLine(line, ws, q) {
       m.append(el("span", "aq-k", w.window ? shortWindow(w.window) : ""), track, el("b", "", quotaText(w)));
     }
     const w = p.ws[0];
-    m.title = p.ws.map((x) => t(x.name) + " " + quotaText(x) + (x.resetsAt ? " · " + t("Resets {when}", { when: new Date(x.resetsAt).toLocaleString() }) : "")).join("\n")
+    m.title = p.ws.map((x) => t(x.name) + " " + quotaText(x) + (x.resetsAt ? " · " + resetText(new Date(x.resetsAt), new Date(x.resetsAt).toLocaleString()) : "")).join("\n")
       + (w.members ? "\n\n" + poolTip(w) : w.tiers ? "\n\n" + tiersText(w) : "");
     line.append(m);
   }
@@ -7152,7 +7156,7 @@ function ringName(w) {
 // tiersText: a family's windows, one a line, for its tooltip.
 function tiersText(w) {
   return (w.tiers || []).map((x) => t(x.name) + " " + quotaText(x)
-    + (x.resetsAt && x.used > 0 ? " · " + t("resets {in}", { in: untilText(new Date(x.resetsAt)) }) : "")).join("\n");
+    + (x.resetsAt && x.used > 0 ? " · " + resetInText(new Date(x.resetsAt)) : "")).join("\n");
 }
 
 async function setQuotaLeft(on) {
@@ -7185,11 +7189,20 @@ function resetClock(at, now = new Date()) {
 }
 
 function untilText(at) {
+  if (at <= Date.now()) return t("Reset time passed");
   const mins = Math.max(1, Math.round((at - Date.now()) / 60000));
   if (mins < 60) return t("in {n}m", { n: mins });
   const h = Math.round(mins / 60);
   if (h < 48) return t("in {n}h", { n: h });
   return t("in {n}d", { n: Math.round(h / 24) });
+}
+
+function resetText(at, when = at <= Date.now() ? at.toLocaleString() : resetClock(at)) {
+  return t(at <= Date.now() ? "Reset time passed {when}" : "Resets {when}", { when });
+}
+
+function resetInText(at) {
+  return at <= Date.now() ? t("Reset time passed") : t("resets {in}", { in: untilText(at) });
 }
 
 // accountAction changes which account a provider uses, or which it has,
@@ -8353,14 +8366,21 @@ function panelQuotaCard(q) {
     card.title += "\n" + q.error;
     return card;
   }
-  if (q.asOf) card.title += "\n" + asOfText(q);
+  if (q.asOf) {
+    card.classList.add("stale");
+    card.title += "\n" + asOfText(q);
+  }
   // a pool's 5-hour and weekly rings, two pools of them, else three
   const fam = familyWindows(q.windows);
   const ws = fam.slice(0, fam.some((w) => w.members) ? 4 : 3);
   // when the windows begun start again: the first bare, the others by name
   const begun = ws.filter((w) => w.resetsAt && w.used > 0);
   card.append(el("span", "pq-sub", begun.length
-    ? begun.map((w, i) => (i || w.members ? ringName(w) + " " : "↻ ") + resetClock(new Date(w.resetsAt))).join(" · ")
+    ? begun.map((w, i) => {
+      const at = new Date(w.resetsAt);
+      return at <= Date.now() ? (i || w.members ? ringName(w) + " " : "") + resetText(at)
+        : (i || w.members ? ringName(w) + " " : "↻ ") + resetClock(at);
+    }).join(" · ")
     : t("Not used yet")));
   const rings = el("span", "pq-rings");
   for (const w of ws) {
@@ -8376,7 +8396,7 @@ function panelQuotaCard(q) {
       rn.append(el("span", "", w.pool.split(/[ &]/)[0]), el("span", "", shortWindow(w.window)));
     }
     r.append(dial, rn);
-    r.title = t(w.name) + " · " + quotaText(w) + (w.resetsAt ? "\n" + t("Resets {when}", { when: new Date(w.resetsAt).toLocaleString() }) + " · " + untilText(new Date(w.resetsAt)) : "")
+    r.title = t(w.name) + " · " + quotaText(w) + (w.resetsAt ? "\n" + resetText(new Date(w.resetsAt), new Date(w.resetsAt).toLocaleString()) + (new Date(w.resetsAt) > Date.now() ? " · " + untilText(new Date(w.resetsAt)) : "") : "")
       + (w.tiers ? "\n\n" + tiersText(w) + "\n" : "")
       + (w.members ? "\n\n" + poolTip(w) + "\n" : "")
       + "\n" + t(quotaLeft ? "Show how much of each window is used" : "Show how much of each window is left");
@@ -8385,6 +8405,7 @@ function panelQuotaCard(q) {
     rings.append(r);
   }
   card.append(rings);
+  if (q.asOf) card.append(el("span", "pq-sub pq-asof", asOfText(q)));
   if (q.resets?.count) {
     const r = el("div", "pq-resets");
     r.append(resetsWords(q.resets));
@@ -8674,9 +8695,10 @@ function quotaWindows(sub) {
     if (w.resetsAt) {
       const at = new Date(w.resetsAt);
       const r = el("div", "quota-reset");
-      r.append(el("span", "", t("Resets {when}", { when: resetClock(at) }) + " ·"), " ", el("span", "", untilText(at)));
+      r.append(el("span", "", resetText(at) + (at > Date.now() ? " ·" : "")));
+      if (at > Date.now()) r.append(" ", el("span", "", untilText(at)));
       quota.append(r);
-      quota.title = t("Resets {when}", { when: at.toLocaleString() });
+      quota.title = resetText(at, at.toLocaleString());
     }
     // a model family's figure: its models, level by level, in its tooltip
     if (w.tiers) quota.title = t("{family}: the most used of its models", { family: w.name }) + "\n" + tiersText(w);

@@ -102,12 +102,7 @@ func quotaCmd(args []string) error {
 		if q.Error != "" {
 			line += "  " + muted.Render(q.Error)
 		}
-		if q.AsOf != nil {
-			line += "  " + muted.Render("as of "+q.AsOf.Local().Format("Jan 2 15:04")+" (cached)")
-			if slices.ContainsFunc(q.Windows, func(w provider.QuotaSpan) bool { return w.ResetsAt != nil && !w.ResetsAt.After(time.Now()) }) {
-				line += muted.Render(" · expired window; current allowance unknown")
-			}
-		}
+		line += quotaReadingCell(q.AsOf, q.Windows)
 		fmt.Println(line)
 	}
 	fmt.Println(faint.Render("  % is how much of a window is used · ↻ when it starts again · --json for scripts, or GET /v1/magpie/quotas on the gateway"))

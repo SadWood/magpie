@@ -1143,6 +1143,8 @@ body.panel .profiles #save { height: 25px; } /* the field's: the line keeps its 
 .pq-bp > b { margin-left: auto; flex: none; font-weight: 600; color: var(--fg-2); }
 .pq-card.bal .quota-track { margin-top: 0; }
 .pq-asof { color: var(--amber); }
+.pq-card.stale > .pq-sub { white-space: normal; text-overflow: clip; overflow-wrap: anywhere; }
+.pq-card > .pq-asof { grid-column: 1 / -1; }
 .pq-card .skeleton.sk-aq { width: 130px; height: 9px; border-radius: 4px; }
 .pq-card .skeleton.sk-ring { width: 34px; height: 34px; border-radius: 50%; }
 /* the panel's footer: a hairline over it, as much room above as below */
@@ -1644,6 +1646,7 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .acc .aq-r { color: var(--muted); }
 .acc .aq-k { color: var(--muted); font-variant-numeric: tabular-nums; }
 .acc .aq-none { color: var(--faint); }
+.acc .aq-asof { flex-basis: 100%; order: 1; color: var(--amber); overflow-wrap: anywhere; }
 .acc .skeleton.sk-aq { width: 110px; height: 8px; border-radius: 4px; }
 .acc .dot.tick.fixed { cursor: default; }
 .acc .dot.tick.fixed:hover { box-shadow: none; }
