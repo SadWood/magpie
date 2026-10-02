@@ -3,9 +3,75 @@ package provider
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
+
+func TestClaudeLocalPermissionFailureIsNotAccountRefusal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix executable permissions")
+	}
+	// Obtain the actual fork/exec error from a local non-executable file,
+	// rather than inventing a Claude Code account-error message.
+	exe := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, execErr := exec.Command(exe).Output()
+	var pathErr *os.PathError
+	if !errors.Is(execErr, os.ErrPermission) || !errors.As(execErr, &pathErr) || pathErr.Op != "fork/exec" {
+		t.Fatalf("expected a local fork/exec permission error, got %v", execErr)
+	}
+	for _, fresh := range []bool{false, true} {
+		t.Run(map[bool]string{false: "without header", true: "fresh header"}[fresh], func(t *testing.T) {
+			_, card := claudeUsageCards(t, "", nil)
+			if fresh {
+				NoteClaudeLimits("a@example.com", []ClaudeLimit{{Kind: "five_hour", Used: .42}})
+			}
+			UsageClaudeVia(func(context.Context) (string, error) { return "", execErr })
+			for range 2 {
+				q := card()
+				if fresh {
+					if q.Error != "" || q.AsOf != nil || len(q.Windows) != 1 || q.Windows[0].Used != 42 {
+						t.Fatalf("a local execution error hid the fresh header: %+v", q)
+					}
+				} else if q.Error != execErr.Error() || q.AsOf != nil || len(q.Windows) != 0 {
+					t.Fatalf("the local execution failure should remain visible without a header: %+v", q)
+				}
+			}
+			timeout := errors.New("network timeout")
+			UsageClaudeVia(func(context.Context) (string, error) { return "", timeout })
+			retryClaudeUsage()
+			q := card()
+			if fresh {
+				if q.Error != "" || q.AsOf != nil || len(q.Windows) != 1 || q.Windows[0].Used != 42 {
+					t.Fatalf("a later timeout retained the local failure as an account refusal: %+v", q)
+				}
+			} else if q.Error != timeout.Error() {
+				t.Fatalf("a later timeout was replaced by the prior local execution error: %+v", q)
+			}
+		})
+	}
+}
+
+func TestClaudeUsageWithPermissionDeniedExplanation(t *testing.T) {
+	const windows = "Current session: 40% used\nCurrent week (all models): 20% used"
+	// This explanatory fixture is not a claimed Claude Code refusal.
+	const note = "Local execution diagnostics: permission denied"
+	for _, text := range []string{note + "\n" + windows, windows + "\n" + note} {
+		t.Run(text, func(t *testing.T) {
+			_, card := claudeUsageCards(t, text, nil)
+			q := card()
+			if q.Error != "" || q.AsOf != nil || len(q.Windows) != 2 || q.Windows[0].Used != 40 || q.Windows[1].Used != 20 {
+				t.Fatalf("an explanatory line discarded a valid usage reading: %+v", q)
+			}
+		})
+	}
+}
 
 func TestClaudeHeaderSurvivesUnclassifiedUsageFailure(t *testing.T) {
 	_, card := claudeUsageCards(t, "offline", nil)

@@ -185,7 +185,6 @@ func TestClaudeUsageFailureDoesNotHideAccountErrors(t *testing.T) {
 		"\x1b[32m" + subscriptionNotice + ".\x1b[0m\n\x1b[31mAuthentication failed\x1b[0m",
 		subscriptionNotice + ".\nHTTP 401 Unauthorized",
 		"Current session: 40% used\nHTTP 401 Unauthorized",
-		"Claude Code: permission denied",
 		"You've hit your limit · resets 3:30am (UTC)",
 		"You are currently using your overages to power your Claude Code usage. We will automatically switch you back to your subscription rate limits when they reset",
 	} {
