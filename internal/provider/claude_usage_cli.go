@@ -29,7 +29,7 @@ func UsageClaudeVia(f func(ctx context.Context) (string, error)) { claudeCLIUsag
 // to, from its /usage.
 func readClaudeUsage(ctx context.Context) ([]QuotaWindow, error) {
 	if claudeCLIUsage == nil {
-		return []QuotaWindow{}, errors.New("Claude Code can't be run from here")
+		return []QuotaWindow{}, errClaudeCannotRun
 	}
 	text, err := claudeCLIUsage(ctx)
 	if err != nil {
@@ -42,6 +42,21 @@ func readClaudeUsage(ctx context.Context) ([]QuotaWindow, error) {
 // "Current week (all models): 4% used · resets Oct 3 at 2pm (Asia/Shanghai)",
 // "Current week (Fable): 0% used"
 var claudeUsageLineRE = regexp.MustCompile(`^Current (session|week(?: \(([^)]+)\))?):\s*([0-9.]+)% used(?:\s*·\s*resets (.+))?$`)
+
+// A successful /usage run can tell only how the subscription is billed,
+// without an allowance. This says nothing about the account's limits.
+var errClaudeUsageUnavailable = errors.New("Claude Code's /usage is temporarily unavailable")
+
+var errClaudeCannotRun = errors.New("Claude Code can't be run from here")
+
+// An account error stays visible even when it also mentions a timeout or
+// rate limit. It is not a temporary failure to read the usage endpoint.
+var claudeUsageDenied = regexp.MustCompile(`(?i)\b(401|403)\b|not (logged|signed) in|signed out|sign-in (has )?expired|unauthorized|forbidden|authentication (failed|required)|invalid (access )?token|(session|usage) limit|using your overages`)
+
+func claudeUsageTemporary(err error) bool {
+	return !claudeUsageDenied.MatchString(err.Error()) &&
+		(err == errClaudeUsageUnavailable || err == errClaudeCannotRun || passing.MatchString(err.Error()))
+}
 
 // parseClaudeUsage reads /usage's windows; now dates a reset that names no
 // year.
@@ -73,9 +88,15 @@ func parseClaudeUsage(text string, now time.Time) ([]QuotaWindow, error) {
 		out = append(out, w)
 	}
 	if len(out) == 0 {
+		if s := strings.TrimSpace(text); s == "" || s == "You are currently using your subscription to power your Claude Code usage" {
+			return out, errClaudeUsageUnavailable
+		}
 		first, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
-		if first == "" {
-			first = "nothing"
+		for _, line := range strings.Split(text, "\n") {
+			if claudeUsageDenied.MatchString(line) {
+				first = strings.TrimSpace(line) // don't hide an account error behind an earlier timeout
+				break
+			}
 		}
 		return out, errors.New("Claude Code's /usage told no allowance: " + clipLine(first))
 	}

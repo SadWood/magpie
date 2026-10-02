@@ -1301,6 +1301,7 @@ const I18N = {
     "Total": "合计",
     "Allowance unavailable": "暂时无法获取额度",
     "As of {when} — couldn't be read just now": "截至 {when}，暂时无法获取最新额度",
+    "A cached window has expired; current allowance is unknown": "缓存中有窗口已过期，其当前额度未知",
     "As of {when}": "截至 {when}",
     "Hide allowances": "收起额度",
     "Show allowances": "展开额度",

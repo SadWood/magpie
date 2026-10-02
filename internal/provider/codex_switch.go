@@ -100,6 +100,13 @@ func NextLogin(ctx context.Context, agent string) (from, to string, back, ok boo
 		return "", "", false, false
 	}
 	u := LoginUsage(ctx, agent)
+	if q := u[from]; q.Provider == "claude" && q.AsOf != nil {
+		for _, w := range q.Windows {
+			if w.ResetsAt != nil && !w.ResetsAt.After(time.Now()) {
+				return "", "", false, false // historical usage doesn't tell whether to move now
+			}
+		}
+	}
 	if first != nil && first.On && first.Lapsed == "" {
 		if q, known := u[first.User]; known && q.Error == "" && !usedPast(q, backShare) {
 			return from, first.User, true, true

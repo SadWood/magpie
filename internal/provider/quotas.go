@@ -72,6 +72,7 @@ type Quota struct {
 	Windows  []QuotaSpan `json:"windows"`
 	Balance  string      `json:"balance,omitempty"`
 	Error    string      `json:"error,omitempty"`
+	AsOf     *time.Time  `json:"asOf,omitempty"` // the cached reading's time, nil for a new one
 	// Until is when the plan's paid time ends, renewed then when Renew is
 	// "auto", over when "off", either when "".
 	Until *time.Time `json:"until,omitempty"`
@@ -99,7 +100,7 @@ func QuotaReport(ctx context.Context, now time.Time) []Quota {
 		qs   []SubscriptionQuota
 	}{{"subscription", subs}, {"plan", plans}, {"balance", balances}} {
 		for _, q := range g.qs {
-			r := Quota{Provider: q.Provider, Name: q.Name, Kind: g.kind, Plan: q.Plan, User: q.User,
+			r := Quota{Provider: q.Provider, Name: q.Name, Kind: g.kind, Plan: q.Plan, User: q.User, AsOf: q.AsOf,
 				Windows: []QuotaSpan{}, Balance: q.Balance, Error: q.Error, Until: q.Until, Renew: q.Renew, Resets: q.Resets}
 			for _, w := range q.Windows {
 				s := QuotaSpan{Name: w.Name, Used: w.Used, Remaining: max(0, 100-w.Used), ResetsAt: w.ResetsAt, Display: w.Display}

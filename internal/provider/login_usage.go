@@ -54,7 +54,7 @@ func LoginUsage(ctx context.Context, agent string) map[string]SubscriptionQuota 
 		go func(l Login) {
 			defer wg.Done()
 			q := keepLast(loginQuota(ctx, l), l.User)
-			if q.Error != "" && ok {
+			if q.Error != "" && ok && q.Provider != "claude" {
 				q = e.q // a hiccup keeps what was known
 			}
 			c.Lock()

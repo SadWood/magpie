@@ -8332,7 +8332,9 @@ function renderPanelQuota() {
 // asOfText: an allowance standing in for one that couldn't be read just
 // now (a vendor rate limiting its usage endpoint) says when it was read.
 function asOfText(q) {
-  return t("As of {when} — couldn't be read just now", { when: new Date(q.asOf).toLocaleString() });
+  const text = t("As of {when} — couldn't be read just now", { when: new Date(q.asOf).toLocaleString() });
+  return q.windows?.some((w) => w.resetsAt && new Date(w.resetsAt).getTime() <= Date.now())
+    ? text + " · " + t("A cached window has expired; current allowance is unknown") : text;
 }
 
 // shortWindow: "5 hours" as 5h, "7 days" as 7d; any other name as it is.

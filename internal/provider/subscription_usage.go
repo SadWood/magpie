@@ -530,12 +530,13 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 		c.m[key] = e
 	}
 	c.Unlock()
+	heard := e.ws != nil && now.Sub(e.heard) < claudeHeard
 	if !read {
 		switch {
+		case ok && e.err != nil && !(heard && claudeUsageTemporary(e.err)):
+			return []QuotaWindow{}, e.err
 		case ok && e.ws != nil:
 			return elapsed(e.ws, now), nil
-		case ok && e.err != nil:
-			return []QuotaWindow{}, e.err
 		case active:
 			return []QuotaWindow{}, errClaudeNotAsked
 		default:
@@ -550,7 +551,7 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 			c.m[key] = f
 		}
 		c.Unlock()
-		if e.ws != nil && now.Sub(e.heard) < claudeHeard {
+		if heard && claudeUsageTemporary(err) {
 			return elapsed(e.ws, now), nil // what Claude Code said stands
 		}
 		return ws, err

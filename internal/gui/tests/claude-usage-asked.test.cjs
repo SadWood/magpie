@@ -15,17 +15,17 @@ const { chromium, webkit } = require("playwright");
 
 const assets = path.resolve(__dirname, "../assets");
 
-function serve(asks, hold) {
+function serve(asks, hold, quotas = [{ provider: "claude", name: "Claude", user: "a@example.com", windows: [{ name: "5 hours", used: 13 }] }], lang = "en") {
   return async (route) => {
     const req = route.request(), url = new URL(req.url());
     const json = (data) => route.fulfill({ json: data });
-    if (url.pathname === "/boot.js") return route.fulfill({ contentType: "text/javascript", body: `window.bootPrefs = {lang:"en",theme:"light",web:false};` });
+    if (url.pathname === "/boot.js") return route.fulfill({ contentType: "text/javascript", body: `window.bootPrefs = {lang:"${lang}",theme:"light",web:false};` });
     if (url.pathname === "/wails/runtime.js") return route.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
-    if (url.pathname === "/api/state") return json({ agents: [], profiles: [], settings: { lang: "en", theme: "light" } });
+    if (url.pathname === "/api/state") return json({ agents: [], profiles: [], settings: { lang, theme: "light" } });
     if (url.pathname === "/api/usage/quotas") {
       asks.push(url.search);
       if (hold.on) await new Promise((r) => (hold.release = r));
-      return json([{ provider: "claude", name: "Claude", user: "a@example.com", windows: [{ name: "5 hours", used: 13 }] }]);
+      return json(quotas);
     }
     if (url.pathname === "/api/groups") return json({ groups: [], models: [] });
     if (url.pathname === "/api/plugins") return json({ plugins: [] });
@@ -37,6 +37,33 @@ function serve(asks, hold) {
 }
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+  for (const lang of ["en", "zh"]) {
+    test(`${engine} ${lang}: an expired Claude snapshot is dated, then replaced on recovery`, async (t) => {
+      const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
+      t.after(() => browser.close());
+      const page = await browser.newPage({ viewport: { width: 900, height: 700 }, reducedMotion: "reduce" });
+      page.setDefaultTimeout(5000);
+      const errors = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      const quota = { provider: "claude", name: "Claude", user: "a@example.com",
+        asOf: new Date(Date.now() - 72e5).toISOString(),
+        windows: [{ name: "5 hours", used: 100, resetsAt: new Date(Date.now() - 36e5).toISOString() }] };
+      await page.route("**/*", serve([], { on: false }, [quota], lang));
+      await page.goto("http://magpie.test/?view=usage");
+      const card = page.locator(".subscription-card");
+      const reading = card.locator(".quota-read");
+      await reading.waitFor();
+      assert.match(await reading.innerText(), lang === "en" ? /As of .*expired.*unknown/ : /截至 .*已过期.*未知/);
+      assert.match(await card.locator(".quota-n").innerText(), /100%/);
+      delete quota.asOf;
+      quota.windows[0].used = 25;
+      quota.windows[0].resetsAt = new Date(Date.now() + 36e5).toISOString();
+      await page.locator("#usageReload").click();
+      await page.waitForFunction(() => document.querySelector(".subscription-card .quota-n")?.textContent.includes("25%"));
+      assert.equal(await reading.count(), 0, "a new reading clears the snapshot warning");
+      assert.deepEqual(errors, []);
+    });
+  }
   test(`${engine}: Claude's usage is asked for only on opening Usage or Refresh`, async (t) => {
     const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
     t.after(() => browser.close());
