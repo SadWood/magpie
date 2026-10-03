@@ -66,7 +66,6 @@ func TestEveryVendorsOverflow(t *testing.T) {
 		status int
 		msg    string
 	}{
-		{413, `{"type":"error","error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}`},
 		{400, "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"},
 		{400, "This model's maximum prompt length is 131072 but the request contains 537812 tokens"},
 		{400, "Please reduce the length of the messages or completion"},

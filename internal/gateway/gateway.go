@@ -1605,23 +1605,31 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				break
 			}
 		}
-		if !last && !hw.passing && !hw.refused && overflowed(hw.code(), hw.errBody()) {
+		if !last && !hw.passing && !hw.refused && (hw.code() == http.StatusRequestEntityTooLarge || overflowed(hw.code(), hw.errBody())) {
 			// too long for this member's model, and as long on every
 			// account of it, but another member — another model, or this
 			// one at another vendor — may hold it (#700: the overflow went
 			// to Kimi Code, which took 0.85 of the request for the model's
 			// window, where the next member would have answered). Only
 			// those not known to be too small are left to ask; none, and
-			// the agent is told, to compact. Nobody rests.
+			// the agent is told, to compact. A byte cap (413) also belongs
+			// to this member: another vendor may take the same body. It
+			// doesn't say the request exceeds another model's window, so
+			// no token estimate filters those members. Nobody rests.
 			tokens := 0
-			if req, err := parse(from, attemptBody); err == nil {
-				tokens = estimate(req)
+			if hw.code() != http.StatusRequestEntityTooLarge {
+				if req, err := parse(from, attemptBody); err == nil {
+					tokens = estimate(req)
+				}
 			}
 			if left := withRoom(cands[i+1:], c, tokens); len(left) > 0 {
 				if other == nil {
 					other = &Try{Status: call.Status, Error: call.Error}
 				}
 				try.Fail = failOverflow
+				if hw.code() == http.StatusRequestEntityTooLarge {
+					try.Fail = failOther
+				}
 				s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
 				skipped = append(skipped, c.label()+": "+call.Error)
 				cands = append(cands[:i+1:i+1], left...)
@@ -1741,6 +1749,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		} else if outgrew {
 			// in the agent's own words for it, for it to compact
 			writeError(w, from, call.Status, hw.failMsg)
+		} else if !hw.passing && hw.code() == http.StatusRequestEntityTooLarge {
+			// No member left took the body; only now add the byte-limit hint.
+			writeError(w, from, call.Status, call.Error)
 		} else {
 			hw.release()
 			if hw.passing {
@@ -3790,6 +3801,12 @@ func writeError(w http.ResponseWriter, proto provider.Protocol, status int, msg 
 			msg = "prompt is too long: " + msg
 		}
 	}
+	if h, held := w.(*holdWriter); status == http.StatusRequestEntityTooLarge && (!held || !h.hold) {
+		const hint = "This is a request-body byte limit; reduce images or large tool results, or start a new conversation with a short summary."
+		if !strings.Contains(msg, hint) {
+			msg += " — " + hint
+		}
+	}
 	var v any
 	switch proto {
 	case provider.Anthropic:
@@ -3812,8 +3829,8 @@ func writeError(w http.ResponseWriter, proto provider.Protocol, status int, msg 
 // context holds: OpenAI's context_length_exceeded, Anthropic's "prompt is
 // too long", Volcengine's "Input exceeds the context limit", "maximum
 // context length", "context window"… and the second line, as pi
-// (packages/ai/src/utils/overflow.ts) collected them: Anthropic's 413
-// request_too_large, Gemini's "input token count … exceeds the maximum",
+// (packages/ai/src/utils/overflow.ts) collected them: Gemini's
+// "input token count … exceeds the maximum",
 // xAI's "maximum prompt length is", Groq's "reduce the length of the
 // messages", OpenRouter's "maximum allowed input length", Together's
 // "longer than the model's context length", llama.cpp's "available
@@ -3824,7 +3841,7 @@ func writeError(w http.ResponseWriter, proto provider.Protocol, status int, msg 
 // model_context_window_exceeded, Ollama's "exceeded max context length",
 // DashScope's "Range of input length should be", "token limit exceeded".
 var tooLongRe = regexp.MustCompile(`(?i)context_length_exceeded|prompt is too long|input is too long|(exceeds?|exceeded|over|beyond)( the)?( model'?s?)?( maximum)? context|context (length|limit|window) (exceeded|is exceeded)|maximum context length|too many (input |prompt )?tokens|上下文(长度)?(超|过长)|超(过|出)(了)?(模型)?(的)?(最大)?上下文` +
-	`|request_too_large|input token count.*exceeds the maximum|maximum prompt length is \d|reduce the length of the messages|maximum allowed input length|longer than the model'?s context length|available context size|greater than the context length|prompt token count of [\d,]+ exceeds the limit|context window exceeds limit|exceeded model token limit|configured context size|prompt too long|prompt exceeds max length|context_window_exceeded|exceeded (max |maximum )?context length|range of input length should be|token limit exceeded`)
+	`|input token count.*exceeds the maximum|maximum prompt length is \d|reduce the length of the messages|maximum allowed input length|longer than the model'?s context length|available context size|greater than the context length|prompt token count of [\d,]+ exceeds the limit|context window exceeds limit|exceeded model token limit|configured context size|prompt too long|prompt exceeds max length|context_window_exceeded|exceeded (max |maximum )?context length|range of input length should be|token limit exceeded`)
 
 // overflowed says a refused request was too long for the model — a
 // request error (400, 413, 422) whose words say so.
