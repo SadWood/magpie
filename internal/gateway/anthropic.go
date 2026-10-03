@@ -22,9 +22,9 @@ type aBlock struct {
 	// image
 	Source *struct {
 		Type      string `json:"type"`
-		MediaType string `json:"media_type"`
-		Data      string `json:"data"`
-		URL       string `json:"url"`
+		MediaType string `json:"media_type,omitempty"`
+		Data      string `json:"data,omitempty"`
+		URL       string `json:"url,omitempty"`
 	} `json:"source,omitempty"`
 	// tool_use
 	ID    string          `json:"id,omitempty"`
@@ -271,9 +271,9 @@ func imageBlock(p Part) aBlock {
 	b := aBlock{Type: "image"}
 	b.Source = &struct {
 		Type      string `json:"type"`
-		MediaType string `json:"media_type"`
-		Data      string `json:"data"`
-		URL       string `json:"url"`
+		MediaType string `json:"media_type,omitempty"`
+		Data      string `json:"data,omitempty"`
+		URL       string `json:"url,omitempty"`
 	}{}
 	if p.URL != "" && p.Data == "" {
 		b.Source.Type, b.Source.URL = "url", p.URL
