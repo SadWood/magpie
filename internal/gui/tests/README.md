@@ -108,6 +108,19 @@ shared helper; a control under what it unrolls (`data-unrolls`) going down
 with it; a click that asks to go somewhere with `scrollOnPurpose(e)`;
 the room kept at the foot going as the reader scrolls back; and the wheel.
 
+`agent-disconnect-preview.test.cjs` checks the disconnect confirmation's
+file previews fill the body instead of the editor's label column. omp and
+Codex previews, restored values, expanding hidden lines, scrolling, Cancel,
+and Codex's separate note are covered at 890×800 and 560×420, including a
+scaled viewport for 150% text size, in English and Chinese on Chromium and
+WebKit. The test uses the real assets with isolated API fixtures and never
+changes user config.
+Set `ARTIFACT_DIR` to retain screenshots.
+
+```sh
+node --test internal/gui/tests/agent-disconnect-preview.test.cjs
+```
+
 `agent-layout.test.cjs` keeps the main window's agent names readable at 520,
 560 and 600 CSS pixels, while the model and effort controls stay inside their
 rows. At 601, the default 660 and 960 pixels, controls remain aligned beside
