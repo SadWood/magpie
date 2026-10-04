@@ -264,7 +264,9 @@ button.rt-session { cursor: pointer; }
    grip in the row's left margin is drawn only while the row is under the
    pointer, dragged, or its handle has the keyboard or its menu open —
    always there it is clutter, as on the Agents page */
-.rt-group .rt-ghandle { position: relative; align-items: center; justify-content: center; width: auto; min-width: 24px; height: 24px; padding: 0 3px; }
+/* 最大堆叠为三个图标和计数圆盘：4 × 20 - 3 × 4 = 68px，
+   加上左右各 3px 留白；固定图标列使每行文字对齐。 */
+.rt-group .ics.rt-ghandle { position: relative; align-items: center; justify-content: center; width: 74px; height: 24px; padding: 0 3px; }
 .rt-group .rt-ghandle::before { content: ""; position: absolute; left: -8px; top: 50%; width: 5px; height: 11px; margin-top: -5.5px; background: radial-gradient(circle, var(--muted) .9px, transparent 1.2px) 0 0 / 3.5px 3.75px; opacity: 0; transition: opacity .15s; }
 .rt-group:is(:hover, .dragging) .rt-ghandle::before, .rt-group .rt-ghandle.open::before, .rt-group .rt-ghandle:focus-visible::before { opacity: 1; }
 /* while a row is dragged the others slide out of its way */
@@ -322,7 +324,7 @@ button.rt-session { cursor: pointer; }
 @media (max-width: 560px) { body:not(.web) .rt-group .tags { display: none; } }
 @media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
   body.web .rt-group {
-    display: grid; grid-template-columns: 20px minmax(0, 1fr) auto;
+    display: grid; grid-template-columns: 74px minmax(0, 1fr) auto;
     gap: 6px 8px; padding: 12px;
   }
   body.web .rt-group .tags { display: flex; flex-wrap: wrap; grid-column: 2 / -1; grid-row: 2; }
