@@ -386,6 +386,18 @@ group's "Show all" comes on hover, "Hide all" at the foot sends every one
 but the model in use, "Show all" there sends none, and Esc or a
 click elsewhere closes it.
 
+`picker-redraw.test.cjs` holds model-save responses while omp's roles menu,
+model picker or thinking control is in use. It checks that fresh rows keep
+the picker on the current button with current fields, preserving its search,
+provider, cursor, scroll and thinking-write queue. It also covers an entry
+or field removed/hidden by the new state, and a reply between pointer press
+and release. It uses isolated API data in English and Chinese on Chromium
+and WebKit:
+
+```sh
+node --test internal/gui/tests/picker-redraw.test.cjs
+```
+
 `omp-roles.test.cjs` draws omp's subagents, smol and slow roles in Chromium
 and WebKit, English and Chinese: each is a square after the model's picker,
 not a picker of its own, as they follow the model while unset; unset it is

@@ -765,6 +765,7 @@ function renderAgents() {
   renderProfiles();
   fit(0, agentsGlide);
   agentsGlide = null;
+  refreshAgentPicker();
 }
 
 // renderProfiles draws the saved profiles as chips, a chip whose save,
@@ -4513,13 +4514,48 @@ function toggleFold() {
   filter((o) => o.fold);
 }
 
+// refreshAgentPicker follows the same entry after the rows are rebuilt by
+// a save or a fresh state. A role's model and thinking both use its menu's
+// button; only an entry that has gone away or is hidden closes the picker.
+function refreshAgentPicker() {
+  if (!pick?.row) return;
+  const agent = state.agents.find((a) => a.id === pick.row);
+  const row = document.querySelector(`#agents .row.agent[data-id="${CSS.escape(pick.row)}"]`);
+  const menu = agent && pick.anchorKey === "tiers" ? tierMenu(agent) : null;
+  const field = pick.field.menu ? menu : agent?.fields.find((f) => f.key === pick.field.key);
+  const anchor = row && [...row.querySelectorAll(`.field[data-key="${CSS.escape(pick.anchorKey)}"]`)].find((b) =>
+    b.offsetWidth && b.offsetHeight && !b.closest("[hidden], [inert]") && getComputedStyle(b).visibility === "visible" &&
+    (!b.closest(".ag-open") || row.classList.contains("open")));
+  if (!field || !anchor || (pick.anchorKey === "tiers" && !pick.field.menu && !menu?.options.some((o) => o.value === field.key))) {
+    closePicker();
+    return;
+  }
+  // A read while slider writes are queued must not undo the last local
+  // choice. Keep the picker object too: its write queue belongs to it.
+  if (pick.effortPending) field.value = pick.field.value;
+  if (pick.pressed) {
+    // Replacing the pressed option before click loses that click; replacing
+    // a slider's value during a drag loses the thumb's current position.
+    Object.assign(pick, { agent, field, anchor, redrawPending: true });
+    anchor.classList.add("open");
+    return;
+  }
+  openPicker(agent, field, anchor, { stopPropagation() {} }, pick.only, true);
+}
+
 // openPicker drops the option list under a field button. `only` narrows the
-// options (the providers page offers one vendor's models at a time).
-function openPicker(agent, field, anchor, ev, only) {
+// options (the providers page offers one vendor's models at a time). keep
+// refreshes an open agent picker without closing it or taking focus again.
+function openPicker(agent, field, anchor, ev, only, keep = false) {
   ev.stopPropagation();
-  const again = pick?.anchor === anchor;
-  closePicker();
-  if (again) return;
+  if (!keep) {
+    const again = pick?.anchor === anchor;
+    closePicker();
+    if (again) return;
+  }
+  const cursor = keep ? pick.items?.[pick.cursor]?.value : undefined;
+  const scroll = keep ? $("#list").scrollTop : 0;
+  if (keep) pick.groupAnimation?.cancel();
   const cur = field.value;
   let options = field.options.filter((o) => !only || only(o));
   // routing groups come first, then each provider's, then the models the
@@ -4569,7 +4605,10 @@ function openPicker(agent, field, anchor, ev, only) {
     options.splice(at < 0 ? options.length : at, 0, { value: "\0disconnect", label: t("Disconnect from magpie"), note: t("put back what {agent} had before magpie", { agent: agent.name }), svg: UNPLUG, reset: true, run: () => askDisconnect(agent) });
   }
   const modelPicker = ["model", "small", "large", MEMORIES, SUB_MODEL, "executor", "planner", ...ROLE_MODELS].includes(field.label) && !only;
-  pick = { agent, field, options, groups, anchor, cursor: 0, free: !only && !field.menu, modelPicker, effortPicker, groupFilter: "all" };
+  const next = { agent, field, options, groups, anchor, only, free: !only && !field.menu, modelPicker, effortPicker,
+    row: anchor.closest("#agents .row.agent")?.dataset.id, anchorKey: anchor.dataset.key };
+  pick = keep ? Object.assign(pick, next) : { ...next, cursor: 0, groupFilter: "all" };
+  if (!["all", "favorites", ...groups].includes(pick.groupFilter)) pick.groupFilter = "all";
   anchor.classList.add("open");
   const pop = $("#pop");
   pop.classList.toggle("model-picker", modelPicker);
@@ -4583,16 +4622,17 @@ function openPicker(agent, field, anchor, ev, only) {
   placePop(anchor, effortPicker ? 232 : modelPicker ? Math.min(490, innerWidth - 16) : (options.some((o) => o.note && o.note !== o.value) ? 372 : 300), effortPicker ? 96 : modelPicker ? Math.min(420, innerHeight - 16) : 340);
   if (effortPicker) {
     renderEffortPicker();
-    $("#effortRange").focus();
+    if (!keep) $("#effortRange").focus();
     return;
   }
   const q = $("#q");
-  q.value = "";
+  if (!keep) q.value = "";
   q.placeholder = modelPicker && extra(field) ? t("{field} — filter, or type any model id…", { field: t(field.label) }) : modelPicker ? t("Filter, or type any model id…") : t("Filter {field}…", { field: t(field.label) });
-  filter();
+  filter(keep && cursor !== undefined ? (o) => o.value === cursor : undefined);
+  if (keep) $("#list").scrollTop = scroll;
   // On touch screens leave the keyboard closed until the filter is tapped,
   // so opening a model list leaves room to browse its choices.
-  if (!web || !matchMedia("(pointer: coarse)").matches) q.focus();
+  if (!keep && (!web || !matchMedia("(pointer: coarse)").matches)) q.focus();
 }
 
 function effortName(option) {
@@ -4739,6 +4779,36 @@ function effortSaid(a, f, o) {
   else status(msg, "ok");
 }
 
+// The entry reflects the same level as the slider, including a pending
+// choice carried over to a new button when an agent's row is rebuilt.
+function paintEffortAnchor(opened, option) {
+  const value = opened.anchor.querySelector(".v");
+  if (value) {
+    value.textContent = effortName(option);
+    value.classList.toggle("empty", !option.value);
+  }
+  opened.anchor.querySelector(".effort-ic")?.replaceWith(effortIcon(opened.field));
+  // a square (the subagents' effort) says it in its title, lit while set
+  if (opened.field.label === SUB_EFFORT) {
+    opened.anchor.classList.toggle("set", !!option.value);
+    opened.anchor.title = subEffortTitle(opened.agent, opened.field, option);
+    opened.anchor.setAttribute("aria-label", opened.anchor.title);
+  }
+  // a tier's effort, opened from the tiers' square: that square's title
+  // and light follow the level
+  if (roleLevel(opened.field.label) && opened.anchor.classList.contains("ag-eff")) {
+    opened.anchor.title = t("{label}: {value}", { label: t(opened.field.label), value: option.value ? effortName(option) : levelUnset(opened.agent) });
+    opened.anchor.setAttribute("aria-label", opened.anchor.title);
+  } else if (roleLevel(opened.field.label)) {
+    const menu = tierMenu(opened.agent);
+    if (menu) {
+      opened.anchor.classList.toggle("set", menu.custom);
+      opened.anchor.title = menuTitle(menu);
+      opened.anchor.setAttribute("aria-label", opened.anchor.title);
+    }
+  }
+}
+
 function renderEffortPicker() {
   const range = $("#effortRange");
   const options = pick.options;
@@ -4770,44 +4840,22 @@ function renderEffortPicker() {
     const option = options[Number(range.value)];
     if (!opened || !option || option.value === opened.field.value) return;
     opened.field.value = option.value;
-    const value = opened.anchor.querySelector(".v");
-    if (value) {
-      value.textContent = effortName(option);
-      value.classList.toggle("empty", !option.value);
-    }
-    opened.anchor.querySelector(".effort-ic")?.replaceWith(effortIcon(opened.field));
-    // a square (the subagents' effort) says it in its title, lit while set
-    if (opened.field.label === SUB_EFFORT) {
-      opened.anchor.classList.toggle("set", !!option.value);
-      opened.anchor.title = subEffortTitle(opened.agent, opened.field, option);
-      opened.anchor.setAttribute("aria-label", opened.anchor.title);
-    }
-    // a tier's effort, opened from the tiers' square: that square's title
-    // and light follow the level
-    if (roleLevel(opened.field.label) && opened.anchor.classList.contains("ag-eff")) {
-      opened.anchor.title = t("{label}: {value}", { label: t(opened.field.label), value: option.value ? effortName(option) : levelUnset(opened.agent) });
-      opened.anchor.setAttribute("aria-label", opened.anchor.title);
-    } else if (roleLevel(opened.field.label)) {
-      const menu = tierMenu(opened.agent);
-      if (menu) {
-        opened.anchor.classList.toggle("set", menu.custom);
-        opened.anchor.title = menuTitle(menu);
-        opened.anchor.setAttribute("aria-label", opened.anchor.title);
-      }
-    }
+    paintEffortAnchor(opened, option);
     // Persist every settled slider value, but keep the compact control open so
     // the user can compare adjacent levels. Queue writes to preserve ordering
     // when keyboard input changes several stops quickly.
+    opened.effortPending = (opened.effortPending || 0) + 1;
     opened.effortSave = (opened.effortSave || Promise.resolve()).then(async () => {
       const next = await api("set", { agent: opened.agent.id, field: opened.field.key, value: option.value });
       state = next;
       effortSaid(opened.agent, opened.field, option);
-    }).catch((e) => status(e.message, "err"));
+    }).catch((e) => status(e.message, "err")).finally(() => { opened.effortPending--; });
   };
   range.onkeydown = (ev) => {
     if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closePicker(); }
   };
   update();
+  if (options[selected]) paintEffortAnchor(pick, options[selected]);
 }
 
 // filter lists the options the query finds; keep: the row for the cursor,
@@ -5391,6 +5439,19 @@ function closePicker() {
   $("#effortControl").hidden = true;
   pick = null;
 }
+
+$("#pop").addEventListener("pointerdown", () => { if (pick) pick.pressed = true; });
+const endPickerPress = () => {
+  const opened = pick;
+  if (!opened?.pressed) return;
+  opened.pressed = false;
+  if (!opened.redrawPending) return;
+  opened.redrawPending = false;
+  // Let click/change finish against the controls still under the pointer.
+  requestAnimationFrame(() => { if (pick === opened) refreshAgentPicker(); });
+};
+document.addEventListener("pointerup", endPickerPress);
+document.addEventListener("pointercancel", endPickerPress);
 
 $("#q").addEventListener("input", filter);
 $("#q").addEventListener("keydown", (e) => {
