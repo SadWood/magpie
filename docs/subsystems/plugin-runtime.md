@@ -300,6 +300,17 @@ starts a Bun host.
   fields and tables, so a page with no stylesheet reads as the window's
   and any rule of the page's wins. Tests: `TestWindowTitles`,
   `plugin-page.test.cjs`.
+- **Text size while away.** On macOS a hidden standalone plugin page keeps
+  its frame laid out (`app.css`, `.view.plugin-page[hidden]`), fixed out of
+  the flow, invisible and unable to take focus or clicks. `pageSizes` in
+  `pluginpages.js` keeps its last visible dimensions while hidden, so a
+  page at its foot isn't scrolled up by a taller hidden viewport. WKWebView
+  misses a `display:none` frame when `pageZoom` changes, leaving its right and
+  bottom edges white on return. Keeping the renderer preserves the page's
+  current document and unsaved state while it follows the window's text
+  size. `plugin-page-zoom.swift` checks actual native painted pixels after
+  zooming up and down; `plugin-page.test.cjs` checks hidden pages take no
+  room or focus and keep their state on return.
 - **The policy's scheme.** The desktop window serves on `wails://localhost`
   (macOS, Linux), and a sandboxed frame has an opaque origin, so a CSP
   source without a scheme matches only http(s) there. `ownWindow` puts the
