@@ -154,7 +154,7 @@ func gatewayHooks(w http.ResponseWriter, r *http.Request, from provider.Protocol
 	if !plugin.HasGateway() {
 		return w, body, func() {}
 	}
-	info := plugin.GatewayContext{Origin: gatewayOrigin(r), Protocol: string(from), Model: modelOf(body), Stream: streamOf(body), Path: r.URL.Path, Agent: agentOf(r), Session: sessionOf(r.Header)}
+	info := plugin.GatewayContext{Origin: gatewayOrigin(r), CallerKeyID: access.Caller(r.Context()).KeyID, Protocol: string(from), Model: modelOf(body), Stream: streamOf(body), Path: r.URL.Path, Agent: agentOf(r), Session: sessionOf(r.Header)}
 	if req, err := parse(from, body); err == nil {
 		info.Cwd = workDir(req)
 		info.Query = gatewayQuery(req)
@@ -202,7 +202,7 @@ func gatewayQuery(req *Request) string {
 func gatewayOrigin(r *http.Request) string {
 	if who := access.Caller(r.Context()); who.KeyID != "" && who.Default && ownComputer(r) {
 		return "magpie-key"
-	} else if who.KeyID != "" || managedKey(r) {
+	} else if who.KeyID != "" || r.Context().Value(unknownCallerKey{}) != nil || managedKey(r) {
 		return "gateway-key"
 	}
 	if local(r) && !forwarded(r) {
