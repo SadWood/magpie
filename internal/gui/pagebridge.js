@@ -8,6 +8,12 @@
 //   magpie.onTheme(fn)            fn(theme) on each change of it
 //   await magpie.options.get()    the plugin's own options (plugins.json)
 //   await magpie.options.set(o)   sets them, and answers with them
+//   await magpie.options.snapshot()  { options, version } from one generation
+//   await magpie.options.compareAndSet(version, o) saves that generation,
+//                                 or returns { conflict: true }; no write
+//                                 follows an unreadable or invalid file
+//   await magpie.options.compareAndPatch(version, changes) applies paths
+//                                 without round-tripping unknown values
 //   await magpie.read(name, p)    a read its package.json's
 //                                 magpie.permissions declares
 //   magpie.context                where a panel is (P5): { provider: {
@@ -126,6 +132,9 @@
     options: {
       get: () => call("options.get"),
       set: (options) => call("options.set", { options }),
+      snapshot: () => call("options.snapshot"),
+      compareAndSet: (version, options) => call("options.compareAndSet", { version, options }),
+      compareAndPatch: (version, changes) => call("options.compareAndPatch", { version, changes }),
     },
     read: (name, params) => call("read", { name, params }),
   };

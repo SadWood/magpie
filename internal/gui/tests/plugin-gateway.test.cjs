@@ -36,6 +36,7 @@ for (const engine of ["chromium", "webkit"]) {
         page.setDefaultTimeout(5000);
         page.setDefaultNavigationTimeout(60000);
         const posted = [], errors = [];
+        let conflict = false;
         const state = {bun:true, bunVersion:"1.4.3", plugins:[{
           spec:SPEC, providers:[], moved:[], isGateway:true, gatewayOnly:true,
           optionsExample:{serverUrl:"http://127.0.0.1:8000",gatewayTimeoutMs:5000},
@@ -43,10 +44,12 @@ for (const engine of ["chromium", "webkit"]) {
         }]};
         page.on("pageerror", e=>errors.push(e.message));
         await page.route("**/*",server(lang,state));
-        await page.route("**/api/plugins/options", r=>{
+        await page.route("**/api/plugins/options-snapshot", r=>r.fulfill({json:{options:state.plugins[0].options || {},optionsJSON:JSON.stringify(state.plugins[0].options || {}),version:"v1"}}));
+        await page.route("**/api/plugins/options-cas", r=>{
           const data=r.request().postDataJSON(); posted.push(data);
-          state.plugins[0].options=data.options;
-          return r.fulfill({json:state});
+          if (conflict) return r.fulfill({json:{conflict:true}});
+          state.plugins[0].options=JSON.parse(data.optionsJSON);
+          return r.fulfill({json:{options:state.plugins[0].options,version:"v2"}});
         });
         await page.goto("http://magpie.test/?view=plugins");
         const installed = {en:"Installed",zh:"已安装","zh-TW":"已安裝",ja:"インストール済み",de:"Installiert"}[lang];
@@ -67,10 +70,39 @@ for (const engine of ["chromium", "webkit"]) {
         const save={en:"Save",zh:"保存","zh-TW":"儲存",ja:"保存",de:"Speichern"}[lang];
         await row.locator(".pm-opts").getByRole("button",{name:save,exact:true}).click();
         await textarea.waitFor({state:"detached"});
-        assert.deepEqual(posted,[{spec:SPEC,options:{serverUrl:"http://127.0.0.1:9000",gatewayTimeoutMs:6000}}]);
+        assert.deepEqual(posted,[{spec:SPEC,optionsJSON:'{"serverUrl":"http://127.0.0.1:9000","gatewayTimeoutMs":6000}',version:"v1"}]);
+        await row.getByRole("button",{name:options,exact:true}).click();
+        const draft = row.locator(".pm-opts textarea");
+        await draft.fill('{"draft":"keep"}');
+        conflict = true;
+        await row.locator(".pm-opts").getByRole("button",{name:save,exact:true}).click();
+        await row.locator(".pm-opts-err").filter({hasText: /draft|草稿|下書き|Entwurf/i}).waitFor();
+        assert.equal(await row.locator(".pm-opts textarea").inputValue(), '{"draft":"keep"}');
+        assert.equal(state.plugins[0].options.serverUrl, "http://127.0.0.1:9000");
         assert.deepEqual(errors,[]);
         await page.close();
       });
     }
+  });
+  test(engine + ": JSON editor sends large unknown numbers as source text", async (t) => {
+    const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({channel:"chromium"}));
+    t.after(() => browser.close());
+    const page = await browser.newPage({viewport:{width:980,height:820}});
+    const raw = '{"future":9007199254740993,"nested":{"n":9007199254740995}}';
+    const state = {bun:true, plugins:[{spec:SPEC,providers:[],moved:[],isGateway:true,gatewayOnly:true,options:JSON.parse(raw)}]};
+    let sent;
+    await page.route("**/*",server("en",state));
+    await page.route("**/api/plugins/options-snapshot", r=>r.fulfill({json:{options:state.plugins[0].options,optionsJSON:raw,version:"v1"}}));
+    await page.route("**/api/plugins/options-cas", r=>{ sent=r.request().postDataJSON(); return r.fulfill({json:{options:state.plugins[0].options,version:"v2"}}); });
+    await page.goto("http://magpie.test/?view=plugins");
+    await page.locator(":is(.lib-tabs .opt, .nav-s):visible",{hasText:"Installed"}).click();
+    const row = page.locator("#view-plugins .pm-row");
+    await row.getByRole("button",{name:"Options",exact:true}).click();
+    const textarea = row.locator(".pm-opts textarea");
+    assert.equal(await textarea.inputValue(),raw);
+    await row.locator(".pm-opts").getByRole("button",{name:"Save",exact:true}).click();
+    await textarea.waitFor({state:"detached"});
+    assert.equal(sent.optionsJSON,raw);
+    await page.close();
   });
 }

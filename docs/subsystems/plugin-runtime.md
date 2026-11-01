@@ -1,5 +1,23 @@
 # Plugin runtime
 
+Community page option editors may use `magpie.options.snapshot()` to obtain
+their options and an opaque generation, then
+`magpie.options.compareAndSet(version, options)`. A stale generation returns
+`{conflict: true}` without writing. The Plugins JSON editor uses the same
+conditional operation and keeps its draft on conflict. All current Magpie
+`plugins.json` read-modify-write paths take the same cross-process file lock;
+a failed lock fails the write. The comparison and write happen under that
+lock and a failed read or parse is not treated as empty. Older Magpie
+processes and external editors that do not use the lock cannot be made
+atomic by this protocol. Old page bridges lack these methods; a page requiring
+the guarantee must not silently fall back to `options.set`.
+Versions are keyed per process to avoid exposing a digest of other plugins'
+secrets; restarting the host invalidates outstanding versions as conflicts.
+`magpie.options.compareAndPatch(version, changes)` applies set/remove paths
+under the same comparison, preserving unedited unknown values, including JSON
+numbers beyond JavaScript's precise integer range. The JSON editor sends its
+source text instead of converting such numbers through JavaScript.
+
 magpie's built-in plugins are the parts of magpie not everyone needs, each
 one a package under `plugins/` that the user can switch off. The runtime in
 `internal/pluginrt` keeps their registry, applies the ones that are on in the

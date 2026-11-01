@@ -1328,11 +1328,13 @@
       const o = el("button", "text", t("Options"));
       o.title = e.options ? t("The options it runs with") : t("It runs with no options; its package suggests some");
       o.disabled = !!b;
-      o.onclick = () => {
-        editing = { pkg, text: JSON.stringify(e.options || e.optionsExample || {}, null, 2), error: "" };
-        draw();
-        // the field the click opened takes the keys, where it is
-        page.querySelector(".pm-opts textarea")?.focus(NO_SCROLL);
+      o.onclick = async () => {
+        try {
+          const snap = await api("plugins/options-snapshot", { spec: e.spec });
+          editing = { pkg, version: snap.version, text: Object.keys(snap.options).length ? snap.optionsJSON : JSON.stringify(e.optionsExample || {}, null, 2), error: "" };
+          draw();
+          page.querySelector(".pm-opts textarea")?.focus(NO_SCROLL);
+        } catch (err) { statusErr(err); }
       };
       val.append(o);
     }
@@ -1379,12 +1381,26 @@
     const bar = el("div", "pm-opts-bar");
     const note = el("span", "", e.options ? t("Applied to the next request") : t("Not set: these are its package's example"));
     note.id = "pluginOptionsNote";
+    const commit = async (text) => {
+      if (busy.size) return;
+      busy.set(name(e.spec), "options");
+      try {
+        const answer = await api("plugins/options-cas", { spec: e.spec, optionsJSON: text, version: editing.version });
+        if (answer.conflict) {
+          editing.error = t("Options changed elsewhere. Your draft is kept; cancel and reopen to reload.");
+          return;
+        }
+        editing = null;
+        await refresh();
+        status(t("{name}'s options saved", { name: shownName(e) }), "ok");
+      } catch (err) { editing.error = String(err?.message || err); }
+      finally { busy.delete(name(e.spec)); draw(); }
+    };
     const save = () => {
       let v;
       try { v = JSON.parse(editing.text || "{}"); } catch (x) { editing.error = t("Not JSON: {error}", { error: x.message }); return draw(); }
       if (!v || typeof v !== "object" || Array.isArray(v)) { editing.error = t("Options are a JSON object"); return draw(); }
-      editing = null;
-      act(name(e.spec), "options", { spec: e.spec, options: v }, () => status(t("{name}'s options saved", { name: shownName(e) }), "ok"));
+      commit(editing.text || "{}");
     };
     const ok = el("button", "text primary", t("Save"));
     ok.onclick = save;
@@ -1396,8 +1412,7 @@
       clr.title = t("Runs it with no options");
       clr.onclick = async () => {
         if (!await confirmAction(t("Clear"), t("Saved middleware options will be removed. The plugin will run with no options."), t("Clear"))) return;
-        editing = null;
-        act(name(e.spec), "options", { spec: e.spec, options: null }, () => status(t("{name}'s options cleared", { name: shownName(e) }), "ok"));
+        await commit("{}");
       };
       bar.append(clr);
     }

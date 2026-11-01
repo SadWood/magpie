@@ -449,6 +449,72 @@ func pluginPageRoutes(mux *http.ServeMux, web bool) {
 	})
 	// a page's or a panel's own options, as plugins.json keeps them: no
 	// other plugin's
+	mux.HandleFunc("POST /api/plugin-pages/options-cas", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Spec    string          `json:"spec"`
+			Version string          `json:"version"`
+			Options json.RawMessage `json:"options"`
+			Changes json.RawMessage `json:"changes"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(rw, r.Body, 64<<10)).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if _, _, ok := windowOf(in.Spec); !ok {
+			fail(rw, errors.New("no plugin page "+in.Spec))
+			return
+		}
+		if len(in.Options) == 0 && len(in.Changes) == 0 {
+			opts, version, err := plugin.OptionsSnapshot(in.Spec)
+			if err != nil {
+				fail(rw, err)
+				return
+			}
+			writeJSON(rw, map[string]any{"options": opts, "version": version})
+			return
+		}
+		if len(in.Changes) != 0 {
+			var changes []plugin.OptionChange
+			if json.Unmarshal(in.Changes, &changes) != nil || changes == nil {
+				fail(rw, errors.New("changes must be an array"))
+				return
+			}
+			if !pageSetAllowed(in.Spec, time.Now()) {
+				http.Error(rw, "a page sets its options once a second at most", http.StatusTooManyRequests)
+				return
+			}
+			opts, version, err := plugin.CompareAndPatchOptions(in.Spec, in.Version, changes)
+			if errors.Is(err, plugin.ErrOptionsConflict) {
+				writeJSON(rw, map[string]any{"conflict": true})
+				return
+			}
+			if err != nil {
+				fail(rw, err)
+				return
+			}
+			writeJSON(rw, map[string]any{"options": opts, "version": version})
+			return
+		}
+		var opts map[string]any
+		if string(in.Options) == "null" || json.Unmarshal(in.Options, &opts) != nil || opts == nil {
+			fail(rw, errors.New("a page's options are an object"))
+			return
+		}
+		if !pageSetAllowed(in.Spec, time.Now()) {
+			http.Error(rw, "a page sets its options once a second at most", http.StatusTooManyRequests)
+			return
+		}
+		opts, version, err := plugin.CompareAndSetOptions(in.Spec, in.Version, opts)
+		if errors.Is(err, plugin.ErrOptionsConflict) {
+			writeJSON(rw, map[string]any{"conflict": true})
+			return
+		}
+		if err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, map[string]any{"options": opts, "version": version})
+	})
 	mux.HandleFunc("POST /api/plugin-pages/options", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Spec    string          `json:"spec"`
