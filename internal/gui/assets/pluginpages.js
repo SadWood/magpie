@@ -133,6 +133,18 @@
         return theme();
       case "options.get":
         return api("plugin-pages/options", { spec: e.spec });
+      case "options.snapshot":
+        return api("plugin-pages/options-cas", { spec: e.spec });
+      case "options.compareAndSet": {
+        const o = m.params?.options, version = m.params?.version;
+        if (!o || typeof o !== "object" || Array.isArray(o) || typeof version !== "string" || !version) throw new Error(t("A page's options are an object"));
+        return api("plugin-pages/options-cas", { spec: e.spec, version, options: o });
+      }
+      case "options.compareAndPatch": {
+        const changes = m.params?.changes, version = m.params?.version;
+        if (!Array.isArray(changes) || typeof version !== "string" || !version) throw new Error("Invalid option changes");
+        return api("plugin-pages/options-cas", { spec: e.spec, version, changes });
+      }
       case "options.set": {
         const o = m.params?.options;
         if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error(t("A page's options are an object"));

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/plugin"
 	"github.com/yetone/magpie/internal/settings"
 )
@@ -188,6 +189,47 @@ func TestPluginPageReadsWhatItDeclared(t *testing.T) {
 	}
 	if !pageSetAllowed("x", time.Now()) || pageSetAllowed("x", time.Now()) || !pageSetAllowed("x", time.Now().Add(2*time.Second)) {
 		t.Error("pageSetAllowed")
+	}
+}
+
+func TestPluginPageConditionalOptions(t *testing.T) {
+	on, off := pagePlugins(t)
+	if err := os.MkdirAll(filepath.Dir(catalog.CachePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalog.CachePath(), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := pageMux()
+	post := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/api/plugin-pages/options-cas", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		return do(h, r)
+	}
+	spec, _ := json.Marshal(on)
+	w := post(`{"spec":` + string(spec) + `}`)
+	var snapshot struct {
+		Version string         `json:"version"`
+		Options map[string]any `json:"options"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &snapshot) != nil || snapshot.Version == "" {
+		t.Fatalf("snapshot: %d %s", w.Code, w.Body)
+	}
+	if err := plugin.SetOptions(on, map[string]any{"other": "kept"}); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := json.Marshal(map[string]any{"spec": on, "version": snapshot.Version, "options": map[string]any{"draft": true}})
+	w = post(string(request))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"conflict":true`) {
+		t.Fatalf("stale save: %d %s", w.Code, w.Body)
+	}
+	opts, _, err := plugin.OptionsSnapshot(on)
+	if err != nil || opts["other"] != "kept" || opts["draft"] != nil {
+		t.Fatalf("overwritten: %v %v", opts, err)
+	}
+	offSpec, _ := json.Marshal(off)
+	if w := post(`{"spec":` + string(offSpec) + `}`); w.Code == 200 {
+		t.Fatal("disabled page read options")
 	}
 }
 

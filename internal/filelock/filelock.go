@@ -30,6 +30,16 @@ var mkdirAll = os.MkdirAll
 // held is false when it went on without the lock: on a file system
 // without locks, or after wait.
 func Lock(path string, wait time.Duration) (unlock func(), held bool) {
+	return lock(path, wait, true)
+}
+
+// LockStrict returns held=false on failure without saying the caller will
+// continue unlocked. It is for writers that must refuse an unsafe write.
+func LockStrict(path string, wait time.Duration) (unlock func(), held bool) {
+	return lock(path, wait, false)
+}
+
+func lock(path string, wait time.Duration, warn bool) (unlock func(), held bool) {
 	// the folder is made only when the file can't be opened for want of
 	// it: made first, each lock asked the system for the folder too, on
 	// every take (#1665: ~190 times in a Windows start's first 25s, each
@@ -54,7 +64,9 @@ func Lock(path string, wait time.Duration) (unlock func(), held bool) {
 		}
 		if time.Since(start) > wait {
 			f.Close()
-			log.Printf("%s: another magpie held it for %v; going on without it", path, wait)
+			if warn {
+				log.Printf("%s: another magpie held it for %v; going on without it", path, wait)
+			}
 			return func() {}, false
 		}
 		time.Sleep(5 * time.Millisecond)

@@ -19,6 +19,9 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,6 +38,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/filelock"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/lastgood"
 	"github.com/yetone/magpie/internal/netproxy"
@@ -55,6 +59,7 @@ type Entry struct {
 	// Options are handed to the plugin as its second argument, as
 	// OpenCode's ["name", {options}] does.
 	Options map[string]any `json:"options,omitempty"`
+	extra   map[string]json.RawMessage
 }
 
 // List is plugins.json.
@@ -69,9 +74,269 @@ type List struct {
 	// party's): provider id → that plugin's spec. Without it the last of
 	// them in Plugins serves the id, as in OpenCode.
 	Prefer map[string]string `json:"prefer,omitempty"`
+	extra  map[string]json.RawMessage
+}
+
+// Unknown fields are retained on writes, including fields introduced by a
+// newer Magpie. JSON numbers in them remain raw rather than float64.
+func mergeExtra(value any, extra map[string]json.RawMessage) ([]byte, error) {
+	b, err := json.Marshal(value)
+	if err != nil || len(extra) == 0 {
+		return b, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return nil, err
+	}
+	for k, v := range extra {
+		if _, known := fields[k]; !known {
+			fields[k] = v
+		}
+	}
+	return json.Marshal(fields)
+}
+
+func (e Entry) MarshalJSON() ([]byte, error) {
+	type plain Entry
+	return mergeExtra(plain(e), e.extra)
+}
+
+func (l List) MarshalJSON() ([]byte, error) {
+	type plain List
+	return mergeExtra(plain(l), l.extra)
+}
+
+func retainExtra(b []byte, l *List) error {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(b, &root); err != nil {
+		return err
+	}
+	plugins := root["plugins"]
+	delete(root, "plugins")
+	delete(root, "config")
+	delete(root, "prefer")
+	l.extra = root
+	if len(plugins) == 0 || string(plugins) == "null" {
+		return nil
+	}
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(plugins, &entries); err != nil {
+		return err
+	}
+	if len(entries) != len(l.Plugins) {
+		return errors.New("plugin list changed while reading")
+	}
+	for i, entry := range entries {
+		if entry == nil || l.Plugins[i].Spec == "" {
+			return errors.New("plugin entry has no spec")
+		}
+		delete(entry, "spec")
+		delete(entry, "off")
+		delete(entry, "options")
+		l.Plugins[i].extra = entry
+	}
+	return nil
 }
 
 var listMu sync.Mutex
+
+// lockList protects every plugins.json read-modify-write across cooperating
+// Magpie processes. A failed file lock is not permission to write unlocked.
+func lockList() (func(), error) {
+	listMu.Lock()
+	unlock, held := filelock.LockStrict(listPath()+".lock", filelock.Wait)
+	if !held {
+		listMu.Unlock()
+		return nil, errors.New("could not lock plugin settings")
+	}
+	return func() { unlock(); listMu.Unlock() }, nil
+}
+
+var ErrOptionsConflict = errors.New("plugin options changed; reload before saving")
+
+// A page sees only its own options. An unkeyed hash of the whole file could
+// otherwise let it guess another plugin's low-entropy secret offline.
+var optionsRevisionKey struct {
+	sync.Once
+	key [32]byte
+	err error
+}
+
+func optionsRevision(b []byte) (string, error) {
+	optionsRevisionKey.Do(func() { _, optionsRevisionKey.err = rand.Read(optionsRevisionKey.key[:]) })
+	if optionsRevisionKey.err != nil {
+		return "", optionsRevisionKey.err
+	}
+	h := hmac.New(sha256.New, optionsRevisionKey.key[:])
+	_, _ = h.Write(b)
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// optionsSnapshot reads the complete on-disk generation. A parse or read
+// failure means unknown; it must never become an empty options object.
+func optionsSnapshot(spec string) (List, string, error) {
+	b, err := os.ReadFile(listPath())
+	if err != nil {
+		return List{}, "", err
+	}
+	var l List
+	if !json.Valid(b) {
+		return List{}, "", errors.New("plugin settings are not valid JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(b))
+	decoder.UseNumber()
+	if err := decoder.Decode(&l); err != nil {
+		return List{}, "", err
+	}
+	if err := retainExtra(b, &l); err != nil {
+		return List{}, "", err
+	}
+	if len(bytes.TrimSpace(b)) == 0 || bytes.TrimSpace(b)[0] != '{' || indexOf(l, spec) < 0 {
+		return List{}, "", fmt.Errorf("no plugin %q", spec)
+	}
+	version, err := optionsRevision(b)
+	return l, version, err
+}
+
+// OptionChange sets or removes one path inside the current options. Values are
+// raw JSON so unrelated numbers and unknown fields are never round-tripped
+// through a JavaScript number.
+type OptionChange struct {
+	Path   []string        `json:"path"`
+	Value  json.RawMessage `json:"value,omitempty"`
+	Remove bool            `json:"remove,omitempty"`
+}
+
+func CompareAndPatchOptions(spec, expected string, changes []OptionChange) (map[string]any, string, error) {
+	unlock, err := lockList()
+	if err != nil {
+		return nil, "", err
+	}
+	defer unlock()
+	l, version, err := optionsSnapshot(spec)
+	if err != nil {
+		return nil, "", err
+	}
+	if expected == "" || expected != version {
+		return nil, "", ErrOptionsConflict
+	}
+	i := indexOf(l, spec)
+	opts := l.Plugins[i].Options
+	if opts == nil {
+		opts = map[string]any{}
+	}
+	if len(changes) == 0 {
+		return cloneMap(opts), version, nil
+	}
+	for _, change := range changes {
+		if len(change.Path) == 0 || len(change.Path) > 4 {
+			return nil, "", errors.New("invalid option path")
+		}
+		parent := opts
+		for _, key := range change.Path[:len(change.Path)-1] {
+			if key == "" {
+				return nil, "", errors.New("invalid option path")
+			}
+			child, ok := parent[key]
+			if !ok {
+				child = map[string]any{}
+				parent[key] = child
+			}
+			next, ok := child.(map[string]any)
+			if !ok {
+				return nil, "", errors.New("option path is not an object")
+			}
+			parent = next
+		}
+		key := change.Path[len(change.Path)-1]
+		if key == "" {
+			return nil, "", errors.New("invalid option path")
+		}
+		if change.Remove {
+			delete(parent, key)
+			continue
+		}
+		if !json.Valid(change.Value) {
+			return nil, "", errors.New("invalid option value")
+		}
+		dec := json.NewDecoder(bytes.NewReader(change.Value))
+		dec.UseNumber()
+		var value any
+		if err := dec.Decode(&value); err != nil {
+			return nil, "", err
+		}
+		parent[key] = value
+	}
+	if len(opts) == 0 {
+		opts = nil
+	}
+	l.Plugins[i].Options = opts
+	if err := save(l); err != nil {
+		return nil, "", err
+	}
+	Restart()
+	l, version, err = optionsSnapshot(spec)
+	if err != nil {
+		return nil, "", err
+	}
+	result := cloneMap(l.Plugins[indexOf(l, spec)].Options)
+	if result == nil {
+		result = map[string]any{}
+	}
+	return result, version, nil
+}
+
+// OptionsSnapshot gives a page the options and generation it must compare
+// when saving. The version includes unrelated entries to avoid overwrites.
+func OptionsSnapshot(spec string) (map[string]any, string, error) {
+	unlock, err := lockList()
+	if err != nil {
+		return nil, "", err
+	}
+	defer unlock()
+	l, version, err := optionsSnapshot(spec)
+	if err != nil {
+		return nil, "", err
+	}
+	opts := cloneMap(l.Plugins[indexOf(l, spec)].Options)
+	if opts == nil {
+		opts = map[string]any{}
+	}
+	return opts, version, nil
+}
+
+// CompareAndSetOptions saves only the generation the editor opened.
+func CompareAndSetOptions(spec, expected string, opts map[string]any) (map[string]any, string, error) {
+	unlock, err := lockList()
+	if err != nil {
+		return nil, "", err
+	}
+	defer unlock()
+	l, version, err := optionsSnapshot(spec)
+	if err != nil {
+		return nil, "", err
+	}
+	if expected == "" || expected != version {
+		return nil, "", ErrOptionsConflict
+	}
+	if len(opts) == 0 {
+		opts = nil
+	}
+	l.Plugins[indexOf(l, spec)].Options = cloneMap(opts)
+	if err := save(l); err != nil {
+		return nil, "", err
+	}
+	Restart()
+	l, version, err = optionsSnapshot(spec)
+	if err != nil {
+		return nil, "", err
+	}
+	result := cloneMap(l.Plugins[indexOf(l, spec)].Options)
+	if result == nil {
+		result = map[string]any{}
+	}
+	return result, version, nil
+}
 
 // bunMu is held through each bun command that changes plugins/ (add,
 // update, remove). Two at once read package.json and bun.lock before
@@ -196,6 +461,31 @@ func list() List {
 func Load() List {
 	l := list()
 	return List{Plugins: clonePlugins(l.Plugins), Config: cloneMap(l.Config), Prefer: maps.Clone(l.Prefer)}
+}
+
+// A write preserves JSON numbers that cannot be represented by float64,
+// including values in options owned by another plugin.
+func loadForWrite() (List, error) {
+	b, err := os.ReadFile(listPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return List{}, nil
+	}
+	if err != nil {
+		return List{}, err
+	}
+	if !json.Valid(b) || len(bytes.TrimSpace(b)) == 0 || bytes.TrimSpace(b)[0] != '{' {
+		return List{}, errors.New("plugin settings are not a JSON object")
+	}
+	var l List
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	if err := d.Decode(&l); err != nil {
+		return List{}, err
+	}
+	if err := retainExtra(b, &l); err != nil {
+		return List{}, err
+	}
+	return l, nil
 }
 
 // clonePlugins copies the entries, their options with them.
@@ -461,9 +751,15 @@ func add(ctx context.Context, spec, version string) (Entry, error) {
 	if err := ensurePi(ctx, Target(spec)); err != nil {
 		return Entry{}, err
 	}
-	listMu.Lock()
-	defer listMu.Unlock()
-	l := Load()
+	unlock, err := lockList()
+	if err != nil {
+		return Entry{}, err
+	}
+	defer unlock()
+	l, err := loadForWrite()
+	if err != nil {
+		return Entry{}, err
+	}
 	e := Entry{Spec: spec}
 	name := Name(spec)
 	if i := slices.IndexFunc(l.Plugins, func(x Entry) bool {
@@ -474,6 +770,7 @@ func add(ctx context.Context, spec, version string) (Entry, error) {
 		return x.Spec == spec || n == name
 	}); i >= 0 {
 		e.Options = l.Plugins[i].Options
+		e.extra = l.Plugins[i].extra
 		// whether they turned it off, which an add never changes
 		e.Off = l.Plugins[i].Off
 		// a provider id the user picked it for stays its (another version,
@@ -606,18 +903,25 @@ func indexOf(l List, name string) int {
 
 // Remove takes a plugin off the list (and out of plugins/).
 func Remove(ctx context.Context, name string) error {
-	listMu.Lock()
-	l := Load()
+	unlock, err := lockList()
+	if err != nil {
+		return err
+	}
+	l, err := loadForWrite()
+	if err != nil {
+		unlock()
+		return err
+	}
 	i := indexOf(l, name)
 	if i < 0 {
-		listMu.Unlock()
+		unlock()
 		return fmt.Errorf("no plugin %q", name)
 	}
 	e := l.Plugins[i]
 	l.Plugins = slices.Delete(l.Plugins, i, i+1)
 	maps.DeleteFunc(l.Prefer, func(_, s string) bool { return s == e.Spec })
-	err := save(l)
-	listMu.Unlock()
+	err = save(l)
+	unlock()
 	if err != nil {
 		return err
 	}
@@ -632,9 +936,15 @@ func Remove(ctx context.Context, name string) error {
 
 // SetOff turns a plugin off or back on.
 func SetOff(name string, off bool) error {
-	listMu.Lock()
-	defer listMu.Unlock()
-	l := Load()
+	unlock, err := lockList()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	l, err := loadForWrite()
+	if err != nil {
+		return err
+	}
 	i := indexOf(l, name)
 	if i < 0 {
 		return fmt.Errorf("no plugin %q", name)
@@ -653,9 +963,15 @@ func SetOff(name string, off bool) error {
 // with it; one switched off leaves the id to the others until it is on
 // again.
 func Prefer(name, id string) error {
-	listMu.Lock()
-	defer listMu.Unlock()
-	l := Load()
+	unlock, err := lockList()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	l, err := loadForWrite()
+	if err != nil {
+		return err
+	}
 	i := indexOf(l, name)
 	if i < 0 {
 		return fmt.Errorf("no plugin %q", name)
@@ -677,9 +993,15 @@ func Prefer(name, id string) error {
 // SetOptions sets the options a plugin is handed (a middleware's
 // ctx.options); nil takes them away.
 func SetOptions(name string, opts map[string]any) error {
-	listMu.Lock()
-	defer listMu.Unlock()
-	l := Load()
+	unlock, err := lockList()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	l, err := loadForWrite()
+	if err != nil {
+		return err
+	}
 	i := indexOf(l, name)
 	if i < 0 {
 		// a short name, as the community's READMEs write it: param-override

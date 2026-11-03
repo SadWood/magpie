@@ -154,11 +154,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         page.on("pageerror", (e) => errors.push(e.message));
         const pluginState = structuredClone(state);
         await page.route("**/*", server(lang, pluginState));
-        await page.route("**/api/plugins/options", (r) => {
+        await page.route("**/api/plugins/options-snapshot", (r) => r.fulfill({json:{options:pluginState.plugins[0].options || {},optionsJSON:JSON.stringify(pluginState.plugins[0].options || {}),version:"v1"}}));
+        await page.route("**/api/plugins/options-cas", (r) => {
           const body = r.request().postDataJSON();
           posted.push(body);
-          pluginState.plugins[0].options = body.options;
-          return r.fulfill({ json: pluginState });
+          const options = JSON.parse(body.optionsJSON);
+          pluginState.plugins[0].options = Object.keys(options).length ? options : null;
+          return r.fulfill({ json: {options,version:"v2"} });
         });
         await page.goto("http://magpie.test/?view=plugins");
         const view = page.locator("#view-plugins");
@@ -189,7 +191,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await alias.locator(".pm-opts textarea").fill('{"mapping": {"fast": "glm-5"}}');
         await alias.locator(".pm-opts button", { hasText: w.save }).click();
         await alias.locator(".pm-opts").waitFor({ state: "detached" });
-        assert.deepEqual(posted, [{ spec: ALIAS, options: { mapping: { fast: "glm-5" } } }]);
+        assert.deepEqual(posted, [{ spec: ALIAS, optionsJSON: '{"mapping": {"fast": "glm-5"}}', version: "v1" }]);
         await alias.getByRole("button", { name: w.options, exact: true }).click();
         const clear = alias.getByRole("button", { name: lang === "zh" ? "清空" : "Clear", exact: true });
         await clear.click();
@@ -203,7 +205,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await clear.click();
         await confirm.locator("button").last().click();
         await alias.locator(".pm-opts").waitFor({ state: "detached" });
-        assert.deepEqual(posted[1], { spec: ALIAS, options: null });
+        assert.deepEqual(posted[1], { spec: ALIAS, optionsJSON: "{}", version: "v1" });
         const borders = await view.locator(".pm-row *").evaluateAll((els) => els.filter((e) => { const s = getComputedStyle(e); return parseFloat(s.borderLeftWidth) > 0 && s.borderLeftStyle !== "none" && parseFloat(s.borderRightWidth) === 0; }).length);
         assert.equal(borders, 0);
         assert.deepEqual(errors, []);

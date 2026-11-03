@@ -392,10 +392,19 @@ func pluginOptions(ctx context.Context, name string, set []string) error {
 	}
 	var opts map[string]any
 	if set[0] != "off" {
-		if err := json.Unmarshal([]byte(set[0]), &opts); err != nil || opts == nil {
+		dec := json.NewDecoder(strings.NewReader(set[0]))
+		dec.UseNumber()
+		if !json.Valid([]byte(set[0])) || dec.Decode(&opts) != nil || opts == nil {
 			return errors.New(`options are a JSON object ('{"key": "value"}'), or off`)
 		}
 	}
+	// The CLI may preserve options it does not change. Bind that read to the
+	// same generation as its write so a concurrent page edit is not lost.
+	current, optionsVersion, err := plugin.OptionsSnapshot(e.Spec)
+	if err != nil {
+		return err
+	}
+	e.Options = current
 	// A switch the plugin declares for its provider (auth.options) is read
 	// from settings' PluginOptions (input.magpie.option), as the editor's
 	// Plugin options saves it; plugins.json's options are a middleware's
@@ -469,7 +478,7 @@ func pluginOptions(ctx context.Context, name string, set []string) error {
 		if len(keep) == 0 {
 			keep = nil
 		}
-		if err := plugin.SetOptions(e.Spec, keep); err != nil {
+		if _, _, err := plugin.CompareAndSetOptions(e.Spec, optionsVersion, keep); err != nil {
 			return err
 		}
 	}

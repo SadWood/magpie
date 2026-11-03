@@ -74,11 +74,12 @@ func TestLoadKeepsWhatAPartialFileGave(t *testing.T) {
 		if l := Load(); len(l.Plugins) != 2 || l.Plugins[0].Spec != "a" || l.Plugins[1].Spec != "b" || l.Plugins[1].Off {
 			t.Fatalf("a wrong type gave %+v, want both plugins", l.Plugins)
 		}
-		if err := SetOff("a", true); err != nil {
-			t.Fatal(err)
+		if err := SetOff("a", true); err == nil {
+			t.Fatal("wrote over a file with a type error")
 		}
-		if l := Load(); len(l.Plugins) != 2 || !l.Plugins[0].Off || l.Plugins[1].Spec != "b" || l.Config["k"] != float64(1) {
-			t.Fatalf("after turning one off: %+v", l)
+		b, err := os.ReadFile(listPath())
+		if err != nil || !strings.Contains(string(b), `"off":"yes"`) {
+			t.Fatalf("original file lost: %s %v", b, err)
 		}
 	})
 }

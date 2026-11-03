@@ -366,9 +366,15 @@ func SetPageOptions(spec string, opts map[string]any) error {
 	if w, only := Window(t); w == nil || !only {
 		return SetOptions(spec, opts)
 	}
-	listMu.Lock()
-	defer listMu.Unlock()
-	l := Load()
+	unlock, err := lockList()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	l, err := loadForWrite()
+	if err != nil {
+		return err
+	}
 	i := indexOf(l, spec)
 	if i < 0 {
 		return fmt.Errorf("no plugin %q", spec)

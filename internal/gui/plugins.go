@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -732,9 +733,11 @@ func pluginRoutes(mux *http.ServeMux, w Windows) {
 	// add, remove, update, turn on or off: each answers with the list
 	mux.HandleFunc("POST /api/plugins/{op}", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Spec    string
-			Off     bool
-			Options map[string]any
+			Spec        string
+			Off         bool
+			Options     map[string]any
+			Version     string
+			OptionsJSON *string
 			// prefer's: the provider id the plugin is to serve
 			Provider string
 		}
@@ -750,6 +753,43 @@ func pluginRoutes(mux *http.ServeMux, w Windows) {
 		defer cancel()
 		var err error
 		switch r.PathValue("op") {
+		case "options-snapshot":
+			opts, version, err := plugin.OptionsSnapshot(in.Spec)
+			if err != nil {
+				fail(rw, err)
+				return
+			}
+			encoded, err := json.MarshalIndent(opts, "", "  ")
+			if err != nil {
+				fail(rw, err)
+				return
+			}
+			writeJSON(rw, map[string]any{"options": opts, "optionsJSON": string(encoded), "version": version})
+			return
+		case "options-cas":
+			if in.OptionsJSON != nil {
+				if !json.Valid([]byte(*in.OptionsJSON)) {
+					fail(rw, errors.New("options are a JSON object"))
+					return
+				}
+				dec := json.NewDecoder(bytes.NewReader([]byte(*in.OptionsJSON)))
+				dec.UseNumber()
+				if err := dec.Decode(&in.Options); err != nil || in.Options == nil {
+					fail(rw, errors.New("options are a JSON object"))
+					return
+				}
+			}
+			opts, version, err := plugin.CompareAndSetOptions(in.Spec, in.Version, in.Options)
+			if errors.Is(err, plugin.ErrOptionsConflict) {
+				writeJSON(rw, map[string]any{"conflict": true})
+				return
+			}
+			if err != nil {
+				fail(rw, err)
+				return
+			}
+			writeJSON(rw, map[string]any{"options": opts, "version": version})
+			return
 		case "add":
 			_, err = addPlugin(ctx, in.Spec)
 		case "remove":
