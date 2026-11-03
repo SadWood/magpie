@@ -86,6 +86,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     await page.evaluate(() => show("agents"));
     await idle.waitForFunction(() => heard.length === 1);
     assert.deepEqual(await idle.evaluate(() => [magpie.visible, heard]), [false, [false]], "left: told it is hidden");
+    assert.equal(await page.locator("#view-plugin-idle").evaluate(el => getComputedStyle(el).visibility), "hidden", "hidden frame remains out of reach while laid out for zoom");
     await pass(9 * MIN);
     assert.equal(await frames("idle"), 1, "kept 9 minutes away");
 
@@ -112,6 +113,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     const again = await opened("idle", IDLE);
     assert.deepEqual(await again.evaluate(() => [magpie.visible, heard, window.mark]), [true, [], undefined], "opened after: a new frame");
     assert.equal(await frames("idle"), 1);
+    await page.setViewportSize({width: 900, height: 650});
+    await page.waitForFunction(() => { const el = document.querySelector("#view-plugin-idle"); return parseFloat(el.style.getPropertyValue("--plugin-page-width")) === el.getBoundingClientRect().width; });
     // and nothing the window held for the one let go says it broke
     await pass(11e3);
     assert.equal(await page.locator("#view-plugin-idle .slot-error").count(), 0, "no 'stopped working'");

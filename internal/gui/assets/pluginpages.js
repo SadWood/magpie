@@ -1,20 +1,9 @@
-// A community plugin's own page in the window (docs/subsystems/
-// plugin-runtime.md, P4): package.json's magpie.page, in a tab of the
-// sidebar's Plugins group, after the built-in pages. The page runs in a
-// frame sandboxed to scripts alone, in an origin of its own: it has no
-// way to the window, to magpie's API (apiFramed) or to the network (its
-// policy, pluginpage.go). What it asks of the window comes by message,
-// from that frame only, and the window answers only what the page may:
-// the theme, its own options, and the reads its package declared
-// (magpie.permissions), which /api/plugin-pages/read checks again.
-// A page that throws, or never says hello, shows the kernel's "This
-// page stopped working" with its Try again.
-//
-// Panels (magpie.panels, P5) are framed the same way in a page's
-// .plugin-slot, as tall as they draw, and one that breaks says so in its
-// place. A page may take a built-in one's place (magpie.page.replaces),
-// and its actions (magpie.actions, P6) are row menu items that open it:
-// plugin-runtime.md says the rest.
+// Community pages and panels run in script-only sandboxed frames. Only
+// their own frame's messages get the theme, options and declared reads;
+// pluginpage.go checks permissions again and blocks direct API/network
+// access. Broken frames get Try again. Pages may replace built-in pages
+// and open from row-menu actions. See docs/subsystems/plugin-runtime.md,
+// P4–P6, for the page, panel and action contracts.
 (() => {
   if (mode !== "window") return;
   // how long a page has to say hello before it is taken as broken
@@ -24,6 +13,16 @@
   // package keeps it (magpie.page.keepAlive)
   const IDLE_MS = 10 * 60e3;
   const pages = new Map(); // key → { entry, frame, hello, timer, shown, idle }
+  // Hidden Mac pages keep their renderer for native page zoom (app.css).
+  // Keep their last visible size too: a taller hidden frame would clamp
+  // the scroll position of a plugin being read at its foot.
+  const pageSizes = new ResizeObserver((entries) => {
+    for (const { target: main } of entries) if (!main.hidden) {
+      const r = main.getBoundingClientRect();
+      main.style.setProperty("--plugin-page-width", r.width + "px");
+      main.style.setProperty("--plugin-page-height", r.height + "px");
+    }
+  });
   const panels = new Map(); // frame → { entry, frame, context, hello, timer, body }
   let panelList = []; // /api/plugin-panels: every panel of a plugin on
   let ctx = null;
@@ -77,8 +76,9 @@
     const p = pages.get(key);
     if (!p) return undefined;
     clearTimeout(p.idle);
-    if (p.frame?.isConnected) { seen(p, true); return p.ready; }
     const main = $("#view-" + key);
+    pageSizes.observe(main);
+    if (p.frame?.isConnected) { seen(p, true); return p.ready; }
     const f = document.createElement("iframe");
     f.className = "plugin-frame";
     // scripts, and nothing else: no same origin (no cookie, no storage of
@@ -113,6 +113,7 @@
       if (view === key || !p.frame) return;
       clearTimeout(p.timer);
       p.frame.remove();
+      pageSizes.unobserve($("#view-" + key));
       p.frame = null;
       p.hello = false;
     }, IDLE_MS);
@@ -224,6 +225,7 @@
     for (const [k, p] of pages) {
       if (keys.has(k)) continue;
       p.frame?.remove();
+      pageSizes.unobserve($("#view-" + k));
       p.frame = null;
       p.gone = true;
       if (view === k) show("plugins");

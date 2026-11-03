@@ -174,6 +174,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await page.locator("iframe.plugin-frame").count(), 0, `${where}: nothing loaded unseen`);
 
         // the example: its declared read, the theme, its options
+        await page.evaluate(() => document.body.classList.add("mac"));
+        const agentsRoom = await page.locator("#view-agents").boundingBox();
         await page.evaluate(() => show("plugin-glance"));
         const glance = await frameReady(page, GLANCE);
         assert.equal(await page.locator("#view-plugin-glance iframe").getAttribute("sandbox"), "allow-scripts", where);
@@ -182,6 +184,23 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.deepEqual(seen.reads.map((r) => [r.spec, r.read]), [["/x/glance", "usage:summary"]], where);
         assert.equal(await glance.evaluate(() => document.documentElement.lang), lang, `${where}: the window's language`);
         assert.equal(await glance.evaluate(() => document.documentElement.dataset.theme), "light", where);
+        // A hidden Mac plugin keeps its renderer for native text-size
+        // changes, but takes no room or focus on the page now being read.
+        // Returning keeps the same document, including unsaved page state.
+        await glance.evaluate(() => { window.keptDraft = "unfinished"; document.body.style.height = "3000px"; scrollTo(0, 10000); });
+        const foot = await glance.evaluate(() => scrollY);
+        await page.evaluate(() => show("agents"));
+        const mainRoom = await page.locator("#view-agents").boundingBox();
+        assert.ok(Math.abs(mainRoom.height - agentsRoom.height) < 1, `${where}: the hidden page takes no room`);
+        assert.equal(await page.locator("#view-plugin-glance").isVisible(), false, `${where}: the plugin page is hidden`);
+        assert.equal(await page.locator("#view-plugin-glance iframe").isVisible(), false, `${where}: its frame is hidden too`);
+        // A programmatic focus cannot enter the hidden frame either.
+        await page.evaluate(() => document.querySelector("#view-plugin-glance iframe").focus());
+        assert.equal(await page.evaluate(() => document.activeElement?.tagName === "IFRAME"), false, `${where}: hidden frame cannot take focus`);
+        await page.evaluate(() => show("plugin-glance"));
+        assert.equal(await glance.evaluate(() => window.keptDraft), "unfinished", `${where}: the page was not reloaded`);
+        assert.equal(await glance.evaluate(() => scrollY), foot, `${where}: the reader stays at the same place`);
+        await glance.evaluate(() => { document.body.style.height = ""; scrollTo(0, 0); });
         await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
         await glance.waitForFunction(() => document.documentElement.dataset.theme === "dark");
         assert.ok((await glance.evaluate(() => document.documentElement.style.getPropertyValue("--magpie-bg"))).length > 0, `${where}: the tokens`);

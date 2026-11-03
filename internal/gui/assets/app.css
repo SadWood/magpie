@@ -3733,6 +3733,15 @@ body:not(.side-nav) #view-settings .set-head.stuck::before { box-shadow: 0 1px 0
 .slot-error .sub { margin-top: 2px; color: var(--fg-2); overflow-wrap: anywhere; }
 /* a community plugin's page (pluginpages.js): its frame fills the page */
 .view.plugin-page { padding: 0; }
+/* WKWebView misses a display:none frame when the text size changes. On
+   return it paints at the old scale, leaving white along two edges. Keep
+   hidden plugin pages laid out, out of the flow and out of reach, so the
+   native page zoom reaches them without reloading their state. */
+body.mac .view.plugin-page[hidden] {
+  display: flex !important; position: fixed; top: 0; left: 0;
+  width: var(--plugin-page-width, 100%); height: var(--plugin-page-height, 100%);
+  visibility: hidden; pointer-events: none;
+}
 .plugin-frame { flex: 1; display: block; width: 100%; min-height: 240px; border: 0; background: transparent; }
 .view.plugin-page > .slot-error { margin: 0 12px; }
 /* a plugin's panels in magpie's own pages (P5): each a card, as tall as

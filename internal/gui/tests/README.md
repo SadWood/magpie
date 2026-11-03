@@ -27,6 +27,30 @@ password, escaped and non-UTF-8 credentials, a login saved in the address
 before loading into the fields, masked addresses/status, clearing
 authentication, Tab and Escape, mode switches, and narrow windows in all
 five languages on Chromium and WebKit.
+
+## Plugin page text size on macOS
+
+`plugin-page-zoom.swift` uses the system's WKWebView, the real `app.css`,
+and a sandboxed frame on `wails://`. It opens the page, hides it, changes
+`pageZoom`, and returns at 125%, 150%, 110% and 100%. It samples the actual
+painted right and bottom edges: DOM dimensions alone pass even when those
+edges are white. Playwright does not drive this native page-zoom API.
+The window stays offscreen, uses a nonpersistent website store, and serves
+only test data. Run it with a temporary home for WebKit's caches:
+
+```sh
+(
+  plugin_test_home=$(mktemp -d)
+  trap 'rm -rf "$plugin_test_home"' EXIT
+  HOME="$plugin_test_home" CFFIXED_USER_HOME="$plugin_test_home" \
+    xcrun swift internal/gui/tests/plugin-page-zoom.swift
+)
+node --test internal/gui/tests/plugin-page.test.cjs
+```
+
+The browser test also checks hidden pages take no room or focus and keep
+unsaved state on return, in both engines, all languages, at 1100 and 420px.
+
 ## Installed desktop fonts
 
 `fonts.test.cjs` exercises the interface/code font controls with installed
