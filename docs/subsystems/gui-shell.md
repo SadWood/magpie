@@ -933,3 +933,14 @@ still follows the existing Not set up folding rules. The dialog explains that
 restoring visibility does not pin an unconfigured agent into the main list.
 See `agent-bulk-visibility.test.cjs` for persistence, partial selection, failed
 saves, narrow layouts and all five languages in Chromium and WebKit.
+
+- Agent field pickers survive a row redraw after a save or a fresh state.
+  `refreshAgentPicker` in `app.js` resolves the current agent, field and
+  visible entry button, including the shared button for omp's roles. It
+  updates the choices without closing the picker, clearing its search or
+  provider filter, or losing its cursor, scroll and queued thinking-level
+  writes. While a pointer is held on the picker, its references update but
+  its contents wait until release so a click or slider drag is not lost.
+  A field or entry that is no longer offered, or an entry hidden by
+  a folded/hidden row, closes the picker. `picker-redraw.test.cjs` holds API
+  replies across interactions to verify this in Chromium and WebKit.

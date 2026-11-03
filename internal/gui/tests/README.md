@@ -464,6 +464,18 @@ English and Chinese: Codex's 10 models stay open either way, and the group
 is there to pick (shiqi_40904 on Discord: with a group on, the provider's
 models started folded and looked gone).
 
+`picker-redraw.test.cjs` holds model-save responses while omp's roles menu,
+model picker or thinking control is in use. It checks that fresh rows keep
+the picker on the current button with current fields, preserving its search,
+provider, cursor, scroll and thinking-write queue. It also covers an entry
+or field removed/hidden by the new state, and a reply between pointer press
+and release. It uses isolated API data in English and Chinese on Chromium
+and WebKit:
+
+```sh
+node --test internal/gui/tests/picker-redraw.test.cjs
+```
+
 `omp-roles.test.cjs` draws omp's subagents, smol and slow roles in Chromium
 and WebKit, English and Chinese: each is a square after the model's picker,
 not a picker of its own, as they follow the model while unset; unset it is
