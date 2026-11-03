@@ -545,6 +545,11 @@ func callerGuard(next http.Handler) http.Handler {
 	})
 }
 
+// unknownCallerKey marks a recognizable gateway key that did not authenticate.
+// identifyCaller replaces its header even on loopback, where requests are
+// allowed without authentication. Hooks must not mistake that for no key.
+type unknownCallerKey struct{}
+
 func identifyCaller(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
 	var who access.Identity
 	ok := false
@@ -584,6 +589,8 @@ func identifyCaller(w http.ResponseWriter, r *http.Request) (*http.Request, bool
 	}
 	if ok {
 		r = r.WithContext(access.WithIdentity(r.Context(), who))
+	} else if managedKey(r) {
+		r = r.WithContext(context.WithValue(r.Context(), unknownCallerKey{}, true))
 	}
 	r.Header = r.Header.Clone()
 	r.Header.Set("Authorization", "Bearer "+Token)

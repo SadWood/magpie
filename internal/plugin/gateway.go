@@ -80,15 +80,16 @@ func GatewayOnly(target string) bool {
 // GatewayContext contains only the request identity and text, never its
 // authorization headers. Empty fields mean the agent supplied no identity.
 type GatewayContext struct {
-	Origin   string `json:"origin"` // local, remote, magpie-key or gateway-key; empty means unknown
-	Protocol string `json:"protocol"`
-	Model    string `json:"model"`
-	Stream   bool   `json:"stream"`
-	Path     string `json:"path"`
-	Agent    string `json:"agent"`
-	Session  string `json:"session"`
-	Cwd      string `json:"cwd"`
-	Query    string `json:"query"`
+	Origin      string `json:"origin"`                // local, remote, magpie-key or gateway-key; empty means unknown
+	CallerKeyID string `json:"callerKeyId,omitempty"` // authenticated gateway key ID; empty when unknown
+	Protocol    string `json:"protocol"`
+	Model       string `json:"model"`
+	Stream      bool   `json:"stream"`
+	Path        string `json:"path"`
+	Agent       string `json:"agent"`
+	Session     string `json:"session"`
+	Cwd         string `json:"cwd"`
+	Query       string `json:"query"`
 }
 
 // GatewayState is aggregate diagnostics for this host's lifetime. Outcomes

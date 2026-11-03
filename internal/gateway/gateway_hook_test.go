@@ -123,6 +123,20 @@ func TestAsyncGatewayThroughProtocols(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Cleanup(plugin.Settle)
+	if err := os.MkdirAll(filepath.Dir(catalog.CachePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalog.CachePath(), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key, err := access.Update("add-key", access.Change{Name: "protocol-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	who, ok := access.Authenticate(key)
+	if !ok {
+		t.Fatal("synthetic key did not authenticate")
+	}
 	upstream := make(chan []byte, 20)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -159,7 +173,7 @@ func TestAsyncGatewayThroughProtocols(t *testing.T) {
 	abs := filepath.Join(t.TempDir(), "recall.hooks.js")
 	if err := os.WriteFile(abs, []byte(`
 export async function onRequest(body,ctx) {
- const response=await fetch(ctx.options.serverUrl,{method:"POST",headers:{"Authorization":ctx.options.authorization},body:JSON.stringify({session:ctx.session,query:ctx.query,origin:ctx.origin}),signal:ctx.signal})
+ const response=await fetch(ctx.options.serverUrl,{method:"POST",headers:{"Authorization":ctx.options.authorization},body:JSON.stringify({session:ctx.session,query:ctx.query,origin:ctx.origin,callerKeyId:ctx.callerKeyId}),signal:ctx.signal})
  if(!response.ok)throw new Error("unavailable")
  const result=await response.json()
  if(typeof result.context!=="string")throw new Error("invalid")
@@ -189,7 +203,7 @@ export async function onRequest(body,ctx) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer magpie-codex")
+		req.Header.Set("Authorization", "Bearer "+key)
 		req.Header.Set(SessionHeader, session)
 		res, err := gw.Client().Do(req)
 		if err != nil {
@@ -215,11 +229,11 @@ export async function onRequest(body,ctx) {
 			if strings.Count(got, "QUARTZ-8413") != 1 || !strings.Contains(got, "session-a") || !strings.Contains(got, "Quartz codename?") {
 				t.Fatalf("recall did not reach provider exactly once: %s", got)
 			}
-			if strings.Contains(got, "context-test") || strings.Contains(got, "magpie-codex") {
+			if strings.Contains(got, "context-test") || strings.Contains(got, key) {
 				t.Fatalf("plugin credentials leaked upstream: %s", got)
 			}
 			query := <-queries
-			if query["query"] != "Quartz codename?" || query["session"] != "session-a" || query["origin"] != "local" {
+			if query["query"] != "Quartz codename?" || query["session"] != "session-a" || query["origin"] != "gateway-key" || query["callerKeyId"] != who.KeyID {
 				t.Fatalf("wrong preparation: %+v", query)
 			}
 		})
@@ -310,8 +324,8 @@ func TestAsyncGatewayOrigin(t *testing.T) {
 	WSLNets = func() []*net.IPNet { return []*net.IPNet{wslNet} }
 	t.Cleanup(func() { ownAddr, WSLNets = oldOwn, oldNets })
 	abs := filepath.Join(t.TempDir(), "origin.hooks.mjs")
-	script := `export function onRequest(body,ctx){ctx.state.origin=ctx.origin;body.origin=ctx.origin;return body}
-export async function onResponse(reply,ctx){await fetch(ctx.options.url,{method:"POST",body:JSON.stringify({origin:ctx.origin,before:ctx.state.origin}),signal:ctx.signal})}`
+	script := `export function onRequest(body,ctx){ctx.state.origin=ctx.origin;ctx.state.key=ctx.callerKeyId ?? "";body.origin=ctx.origin;body.key=ctx.state.key;ctx.callerKeyId="plugin-mutated";return body}
+export async function onResponse(reply,ctx){await fetch(ctx.options.url,{method:"POST",body:JSON.stringify({origin:ctx.origin,before:ctx.state.origin,key:ctx.callerKeyId ?? "",beforeKey:ctx.state.key}),signal:ctx.signal})}`
 	observed := make(chan map[string]string, 20)
 	observer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var got map[string]string
@@ -324,6 +338,13 @@ export async function onResponse(reply,ctx){await fetch(ctx.options.url,{method:
 		t.Fatal(err)
 	}
 	if _, err := plugin.Add(t.Context(), abs); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(t.TempDir(), "second.hooks.mjs")
+	if err := os.WriteFile(second, []byte(`export function onRequest(body,ctx){body.secondKey=ctx.callerKeyId ?? "";return body}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.Add(t.Context(), second); err != nil {
 		t.Fatal(err)
 	}
 	if err := plugin.SetOptions(abs, map[string]any{"url": observer.URL}); err != nil {
@@ -355,6 +376,7 @@ export async function onResponse(reply,ctx){await fetch(ctx.options.url,{method:
 			req := httptest.NewRequest("POST", "http://127.0.0.1/v1/chat/completions", strings.NewReader(`{"model":"fake/m1","origin":"local","messages":[{"role":"user","content":"hello"}]}`))
 			req.RemoteAddr = tc.peer
 			req.Header.Set("X-Magpie-Origin", "local")
+			req.Header.Set("X-Magpie-Caller-Key-Id", "spoofed")
 			if tc.header != "" {
 				req.Header.Set(tc.header, "remote-client")
 			}
@@ -369,14 +391,22 @@ export async function onResponse(reply,ctx){await fetch(ctx.options.url,{method:
 				}
 				return
 			}
+			wantKey := ""
+			if tc.key != "" {
+				who, ok := access.Authenticate(tc.key)
+				if !ok {
+					t.Fatal("synthetic key failed authentication")
+				}
+				wantKey = who.KeyID
+			}
 			w := httptest.NewRecorder()
 			lanGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w, b, done := gatewayHooks(w, r, provider.Chat, []byte(`{"model":"fake/m1","origin":"local","messages":[{"role":"user","content":"hello"}]}`))
 				defer done()
 				var got map[string]any
 				json.Unmarshal(b, &got)
-				if got["origin"] != tc.want {
-					t.Errorf("request origin=%v, want %s", got["origin"], tc.want)
+				if got["origin"] != tc.want || got["key"] != wantKey || got["secondKey"] != wantKey {
+					t.Errorf("request origin/key=%v/%v, want %s/%s", got["origin"], got["key"], tc.want, wantKey)
 				}
 				w.Header().Set("Content-Type", "application/json")
 				io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
@@ -386,11 +416,93 @@ export async function onResponse(reply,ctx){await fetch(ctx.options.url,{method:
 			}
 			select {
 			case got := <-observed:
-				if got["origin"] != tc.want || got["before"] != tc.want {
-					t.Fatalf("callback provenance=%v, want %s", got, tc.want)
+				if got["origin"] != tc.want || got["before"] != tc.want || got["key"] != wantKey || got["beforeKey"] != wantKey {
+					t.Fatalf("callback provenance=%v, want %s/%s", got, tc.want, wantKey)
 				}
 			case <-time.After(10 * time.Second):
 				t.Fatal("missing completion origin")
+			}
+		})
+	}
+}
+
+// A failed recognizable key is still allowed from loopback, but must not be
+// recast as an unkeyed request to hooks after the guard replaces its header.
+func TestAsyncGatewayUnrecognizedKeyOnLoopback(t *testing.T) {
+	t.Setenv("MAGPIE_BUN", testenv.Bun(t))
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Cleanup(plugin.Settle)
+	if err := os.MkdirAll(filepath.Dir(catalog.CachePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalog.CachePath(), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(t.TempDir(), "identity.hooks.mjs")
+	if err := os.WriteFile(abs, []byte(`export function onRequest(body,ctx){body.seen={origin:ctx.origin,id:ctx.callerKeyId ?? ""};return body}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.Add(t.Context(), abs); err != nil {
+		t.Fatal(err)
+	}
+	add := func(name string) (string, string) {
+		t.Helper()
+		secret, err := access.Update("add-key", access.Change{Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		who, ok := access.Authenticate(secret)
+		if !ok {
+			t.Fatal("synthetic key did not authenticate")
+		}
+		return who.KeyID, secret
+	}
+	disabledID, disabled := add("disabled")
+	removedID, removed := add("removed")
+	rotatedID, stale := add("rotated")
+	if _, err := access.Update("off-key", access.Change{Key: disabledID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := access.Update("remove-key", access.Change{Key: removedID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := access.Update("rotate-key", access.Change{Key: rotatedID}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(lanGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w, b, done := gatewayHooks(w, r, provider.Chat, []byte(`{"model":"fake/m1","messages":[{"role":"user","content":"hello"}]}`))
+		defer done()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(b)
+	})))
+	defer server.Close()
+	for _, tc := range []struct{ name, token, origin string }{
+		{"unkeyed", "", "local"}, {"ordinary local token", "anything", "local"},
+		{"disabled", disabled, "gateway-key"}, {"removed", removed, "gateway-key"},
+		{"rotated", stale, "gateway-key"}, {"fabricated", "sk-magpie-not-a-real-key", "gateway-key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequestWithContext(t.Context(), "POST", server.URL+"/v1/chat/completions", nil)
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			res, err := server.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer res.Body.Close()
+			var got struct {
+				Seen struct {
+					Origin string `json:"origin"`
+					ID     string `json:"id"`
+				} `json:"seen"`
+			}
+			if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if res.StatusCode != 200 || got.Seen.Origin != tc.origin || got.Seen.ID != "" {
+				t.Fatalf("status=%d identity=%+v, want %s with no authenticated ID", res.StatusCode, got.Seen, tc.origin)
 			}
 		})
 	}

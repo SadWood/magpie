@@ -1428,7 +1428,9 @@ async function gatewayBegin(p, signal) {
       }
       if (JSON.stringify(next.config?.tools) !== JSON.stringify(body.config?.tools) || JSON.stringify(next.config?.toolConfig) !== JSON.stringify(body.config?.toolConfig)) throw new Error("context hook changed client tools")
       body = next
-      run.plugins.push({ h, ctx })
+      // Keep the authenticated ID outside the plugin's mutable context so a
+      // hook cannot accidentally change the identity of its response.
+      run.plugins.push({ h, ctx, callerKeyId: p.context?.callerKeyId })
     } catch {
       if (ownSignal.aborted) outcome = signal.aborted ? "cancelled" : "timeout"
       else if (!["unbound", "unauthorized", "unavailable", "invalid"].includes(outcome)) outcome = "error"
@@ -1457,16 +1459,15 @@ async function gatewayFinish(run, p, signal) {
   run.finished = true
   const total = AbortSignal.any([signal, run.controller.signal, AbortSignal.timeout(gatewayBudget())])
   try {
-    for (const { h, ctx } of run.plugins) {
+    for (const { h, ctx, callerKeyId } of run.plugins) {
       if (total.aborted) break
       if (typeof h.onResponse !== "function") continue
       const ctl = new AbortController()
       const timer = setTimeout(() => ctl.abort(), gatewayTimeout(h))
-      ctx.signal = AbortSignal.any([total, ctl.signal])
-      ctx.success = p.success === true
-      if (p.request !== undefined) ctx.request = structuredClone(p.request)
+      const responseCtx = { ...ctx, callerKeyId, signal: AbortSignal.any([total, ctl.signal]), success: p.success === true }
+      if (p.request !== undefined) responseCtx.request = structuredClone(p.request)
       try {
-        await bounded(Promise.resolve().then(() => h.onResponse(structuredClone(p.reply), ctx)), ctx.signal)
+        await bounded(Promise.resolve().then(() => h.onResponse(structuredClone(p.reply), responseCtx)), responseCtx.signal)
       } catch {
         if (!signal.aborted) send({ event: "log", level: "warn", message: `${h.spec}: gateway response hook failed or timed out` })
       } finally {

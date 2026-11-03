@@ -42,7 +42,7 @@ reply it asked for). A rolled-back hook counts as failed and gets no `onResponse
 for that request. It cannot reject requests or register tools. The synchronous middleware API remains available separately.
 
 Context fields: `protocol` (`chat`, `responses`, `anthropic`, `gemini`), `model`,
-`stream`, `path`, `origin`, `agent`, `session`, `cwd`, `query`, package `options`, private
+`stream`, `path`, `origin`, `callerKeyId`, `agent`, `session`, `cwd`, `query`, package `options`, private
 request `state`, an `AbortSignal` and `report(code, bytes)`. Headers and client
 credentials are not forwarded to the hook. Query extraction keeps original model
 input intact while excluding client environment/instruction notices from recall.
@@ -66,8 +66,22 @@ agents beyond `local` checks `magpie-key`, never `gateway-key`
 (plugins#526). Hosts before `magpie-key` (v0.1.2208) sent `gateway-key` for
 the sharing key too, so a plugin that trusts only `local` sees both as
 not local, as before. Forwarded traffic stays
-remote even with `MAGPIE_TRUST_PROXY=1`. No key, key name, peer address or
-client-supplied origin claim is exposed. Missing origin on an older host means
+remote even with `MAGPIE_TRUST_PROXY=1`. No key secret, key name, peer address or
+client-supplied origin claim is exposed. `callerKeyId`, when present, is the
+ID of the gateway key authenticated for this request, not its secret or name.
+It identifies the credential, not a person or an application. An absent ID
+means unknown, including on older hosts and when a key did not authenticate;
+it must not be used to authorize access. A key's ID survives renaming and
+rotation; deleting and creating a key produces a different ID. Sharing a key
+shares its ID and any access granted to it. A plugin that grants a key access
+to private data must make that grant explicit and isolate its state per key.
+An unrecognized `sk-magpie-` key on loopback is still served by the gateway,
+but is classified `gateway-key` with no authenticated ID even after its
+header is replaced. Loopback accepts arbitrary tokens: once a user-supplied
+key value is removed, it may be indistinguishable from any other local token
+and classified `local`. This field does not establish a security boundary
+between programs running on the same computer.
+Missing origin on an older host means
 unknown. This classification is not a user identity; plugins that export
 conversations must obtain their own explicit opt-in and default to skipping
 non-local or unknown origins. It is available in both lifecycle callbacks.
