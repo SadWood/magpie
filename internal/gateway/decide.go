@@ -525,7 +525,11 @@ func (s *Server) postDecideSent(ctx context.Context, p provider.Provider, model 
 		return decided{}, err
 	}
 	via := p.DecideVia()
-	body = provider.DecideAsk(via, model, body)
+	body, err = provider.PrepareDecideAsk(via, model, body)
+	if err != nil {
+		b, _ := json.Marshal(map[string]any{"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"}})
+		return decided{status: http.StatusBadRequest, answer: b}, nil
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
 		return decided{}, err
@@ -544,7 +548,7 @@ func (s *Server) postDecideSent(ctx context.Context, p provider.Provider, model 
 		req.Header.Set("ai-model-id", model)
 		req.Header.Set("ai-evaluation-model-specification-version", "4")
 	}
-	if err := p.Sign(ctx, req, provider.Chat, body); err != nil {
+	if err := p.Sign(ctx, req, p.DecideProtocol(), body); err != nil {
 		return decided{}, err
 	}
 	res, err := p.Do(s.client, req)

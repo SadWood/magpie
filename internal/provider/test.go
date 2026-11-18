@@ -223,7 +223,7 @@ func (p Provider) ModelTest() string {
 // name the model in headers of their own.
 func (p Provider) AsksDecideModels() bool {
 	v := p.DecideVia()
-	return p.Decides() && (v == ViaSystemOne || v == ViaVercel || v == ViaCloudflare)
+	return p.Decides() && (v == ViaSystemOne || v == ViaVercel || v == ViaCloudflare || v == ViaGoogle)
 }
 
 // mantleBase is base for model at the prefix Mantle serves it under

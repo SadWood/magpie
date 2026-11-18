@@ -1060,6 +1060,21 @@ page and the Settings rows.
 System One uses `RouteDecider` and `postDecide` in
 [`decide.go`](../../internal/gateway/decide.go), taking one provider prefix
 off at each hop and preserving the state, questions and vendor errors.
+Google's native Decisions API uses this same routing path through
+`PrepareDecideAsk`: a text state becomes `input`, and a structured state is
+serialized whole as JSON text, preserving previous-turn context. Choice IDs
+are unchanged and a missing description becomes an empty string. Google's
+answers retain probabilities, confidence and score legends; token usage is
+renamed for accounting. `/v1/decisions` reaches the same model through the
+existing Decisions/System One translation, preserving question order and typed
+choice values. This adapter supports text and JSON state, not media; unsupported
+fields are refused with 400 before any upstream call. It adds no native
+`/v1beta/decisions` gateway route. Google's own schema limits still apply,
+including ASCII question names and 2–255 choice options or score levels.
+Google sorts choice IDs in UTF-8 byte order and resolves exact ties to the
+first ID; reordering JSON does not change that. Use stable, descriptive IDs
+and calibrate routing confidence on your own examples.
+
 A model naming a group of decision models (`provider.Group.Decides`: every
 member a decision model; `cleanDecisionGroup` in
 [`decide_group.go`](../../internal/provider/decide_group.go) refuses a mixed

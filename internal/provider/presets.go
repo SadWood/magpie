@@ -178,6 +178,7 @@ var presets = []PresetDef{
 		Website: "https://platform.openai.com", KeysURL: "https://platform.openai.com/api-keys"},
 	{ID: "google", Name: "Google Gemini", Icon: "gemini-color", Kind: KindVendor, Catalog: "google",
 		Chat:    "https://generativelanguage.googleapis.com/v1beta/openai",
+		Decide:  "https://generativelanguage.googleapis.com/v1beta",
 		Note:    "Gemini Developer API",
 		Website: "https://aistudio.google.com", KeysURL: "https://aistudio.google.com/apikey"},
 	// Google's Gemini models in the user's own Google Cloud project

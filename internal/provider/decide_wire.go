@@ -46,6 +46,8 @@ func DecideAsk(via, model string, body []byte) []byte {
 // usage named as System One names it.
 func DecideAnswer(via string, b []byte) []byte {
 	switch via {
+	case ViaGoogle:
+		return googleDecisionAnswer(b)
 	case ViaCloudflare:
 		var env struct {
 			Result json.RawMessage `json:"result"`

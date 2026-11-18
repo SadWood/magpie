@@ -1978,8 +1978,10 @@ func normalize(p Provider) Provider {
 	// custom one of either protocol, answers System One on the same key:
 	// its decision model is offered with no URL to type (a user on
 	// Discord found no System One endpoint for Ark, custom or preset)
+	// Google's Developer API similarly serves its native Decisions API;
+	// subscriptions, Vertex, relays and explicit overrides are unchanged.
 	if p.Decide == "" {
-		p.Decide = p.arkSystemOne()
+		p.Decide = cmp.Or(p.googleDecisionBase(), p.arkSystemOne())
 	}
 	if p.Routing != Ordered && p.Routing != Rotate && p.Routing != LeastUsed && p.Routing != Pace && p.Routing != Weighted && p.Routing != FreeFirst && p.Routing != Fastest && p.Routing != Drain && !PluginRouting(p.Routing) {
 		p.Routing = ""

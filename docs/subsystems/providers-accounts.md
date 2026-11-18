@@ -160,6 +160,15 @@ Coding and Agent Plans answer System One nothing (404) and get none; a
 key of another plan is never asked it (`decideKeys`). A URL the user gave
 is kept. `TestArkPayAsYouGoDecides`, `TestArkDecisionSkipsPlanKeys`,
 `custom-systemone-url.test.cjs`.
+Google's Gemini Developer API also offers its own `gemini-decision-1` beside
+its conversation models. The `google` preset and saved key providers at the
+official `/v1beta/openai` endpoint derive `/v1beta` as their decision base;
+an explicit decision base is kept. `ViaGoogle` posts to `/v1beta/decisions`
+using `x-goog-api-key`, with no change to subscriptions, Vertex or relay URLs.
+The model appears among decision classifiers, not chat models. Discovery and
+the model test send the same small native decision request. See
+[`decide_google.go`](../../internal/provider/decide_google.go).
+
 Refresh replaces the list: removed decisions stop routing, and an empty
 remote list never gains a fabricated Jev alias.
 An older peer without the decision-list extension continues serving its

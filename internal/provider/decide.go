@@ -90,10 +90,12 @@ func (p Provider) arkSystemOne() string {
 	return ""
 }
 
-// vendorDecision is the decision model of the vendor whose System One
-// API base is, Bailian's or Ark's, which its model list never names.
+// vendorDecision is the vendor's own decision model beside its chat models:
+// Google's native Decisions API, or Bailian's and Ark's System One APIs.
 func vendorDecision(base string) (catalog.Model, bool) {
 	switch {
+	case googleDecides(base):
+		return catalog.Model{ID: GoogleDecision, Name: "Gemini Decision 1"}, true
 	case bailianDecides(base):
 		return catalog.Model{ID: BailianDecision, Name: "Decision model (preview)"}, true
 	case arkDecides(base):
@@ -111,9 +113,8 @@ func (p Provider) DecideHeaders(h http.Header) {
 }
 
 // bailianApart reports whether p serves conversations and a vendor's own
-// decision model both (Bailian's Token Plan, #1506, or Ark's pay as you
-// go with its decision URL given): its chat models' list never names the
-// decision model, which is kept apart from it.
+// decision model both (Bailian, Ark or Google): the decision model is
+// offered separately, whether or not its chat model list names it.
 func (p Provider) bailianApart() bool {
 	_, ok := vendorDecision(p.Decide)
 	return !p.DecideOnly() && ok
@@ -165,7 +166,7 @@ func (p Provider) DecidesModel(model string) bool {
 	}
 	if p.bailianApart() {
 		m, _ := vendorDecision(p.Decide)
-		return model == m.ID
+		return model == m.ID || p.DecideVia() == ViaGoogle && strings.TrimPrefix(model, "models/") == m.ID
 	}
 	// decideListed's answer, without its list copied for each model
 	// asked about: a provider's every model was asked, a copy of the whole
@@ -336,7 +337,8 @@ var cloudflareDecideModels = []catalog.Model{
 	{ID: CloudflareClefFlash, Name: "Clef Flash"},
 }
 
-// The ways a decision API is asked, by where it is (DecideVia): TypeSafe's
+// The ways a decision API is asked, by where it is (DecideVia): Google's
+// native Decisions API; TypeSafe's
 // own System One; Vercel's AI Gateway, at its TypeSafe API (System One's
 // questions and answers, with its own name for Jev) or, where an older
 // setup points, at the AI SDK's evaluation models (a boolean for a noul
@@ -344,6 +346,7 @@ var cloudflareDecideModels = []catalog.Model{
 // questions and answers, in Cloudflare's envelope and at an account's
 // address).
 const (
+	ViaGoogle     = "google"
 	ViaSystemOne  = "systemone"
 	ViaVercel     = "vercel"
 	ViaVercelEval = "vercel-eval"
@@ -359,6 +362,8 @@ func (p Provider) DecideVia() string {
 	}
 	base := strings.TrimRight(p.Decide, "/")
 	switch h := HostOf(base); {
+	case googleDecides(base):
+		return ViaGoogle
 	case strings.HasSuffix(base, "/v4/ai"):
 		return ViaVercelEval
 	case h == "ai-gateway.vercel.sh" || strings.HasSuffix(base, "/typesafe") || strings.Contains(base, "/typesafe/v1"):
@@ -559,6 +564,8 @@ func (p Provider) vercelTypeSafe() string {
 func (p Provider) DecideURL(ctx context.Context) (string, error) {
 	ctx = p.Via(ctx)
 	switch p.DecideVia() {
+	case ViaGoogle:
+		return strings.TrimRight(p.Decide, "/") + "/decisions", nil
 	case ViaVercel:
 		return p.vercelTypeSafe() + "/v1/systemone", nil
 	case ViaVercelEval:
@@ -853,6 +860,9 @@ func DecideRouteStatus(err error) int {
 // jev-latest (Vercel: typesafe-ai/jev, Cloudflare: typesafe/jev). Preview
 // and other unlisted names are none: the channel has no such model.
 func resolveDecideModel(p Provider, name string) (string, bool) {
+	if p.DecideVia() == ViaGoogle {
+		name = strings.TrimPrefix(name, "models/")
+	}
 	if !p.DecidesModel(name) {
 		return "", false
 	}
@@ -1049,14 +1059,17 @@ func (p Provider) AskSystemOne(ctx context.Context, model string) error {
 		"state":     map[string]any{"text": "ping"},
 		"questions": map[string]any{"ok": map[string]any{"type": "noul", "instructions": "Is this a test?"}}})
 	via := p.DecideVia()
-	body = DecideAsk(via, model, body)
+	body, err = PrepareDecideAsk(via, model, body)
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(probelog.WithModel(ctx, model), http.MethodPost, u, strings.NewReader(string(body)))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	p.DecideHeaders(req.Header)
-	if err := p.Sign(ctx, req, Chat, nil); err != nil {
+	if err := p.Sign(ctx, req, p.DecideProtocol(), nil); err != nil {
 		return err
 	}
 	// a plugin's goes through its fetch (Do), at plugin://<id>/v1/systemone

@@ -1245,7 +1245,8 @@ conversation), and `questions`, each answered with a probability, a choice
 or a score. It takes the gateway's key, as chat does, and is sent as given,
 only `model` changed, to an OpenAI API key, to Azure OpenAI (at
 `/openai/v1/decisions`, the model your deployment's name) or to another
-magpie. Any other provider is refused with a 400 that says so. Only input
+magpie. Providers with neither this API nor a supported decision adapter
+are refused with a 400 that says so. Only input
 tokens are counted, cached ones apart.
 
 A decision model that answers System One instead (Qwen's
@@ -1265,6 +1266,18 @@ other way, `/v1/systemone` with a model only the Decisions API serves
 curl localhost:3425/v1/decisions -H "Authorization: Bearer $MAGPIE_KEY" \
   -d '{"model":"gpt-6-luna","input":"The parcel arrived torn open.","questions":[{"type":"predicate","name":"damaged","instructions":"Was the parcel damaged?"}]}'
 ```
+
+The `google` provider also serves `google/gemini-decision-1` through these
+routes and as a routing group's classifier. It calls Google's native
+`/v1beta/decisions`, not chat completions, with the provider's API key.
+Text and JSON state are supported; images, audio, video and PDFs are not
+translated by this adapter. Structured state is serialized as JSON text,
+including previous-turn context. Use ASCII question names and 2–255 choice
+options or score levels. Choice IDs stay unchanged; Google sorts them by
+UTF-8 byte order and breaks exact ties to the first ID. Confidence remains
+Google's value. [Google's API guide](https://aistudio.google.com/docs/decisions-api)
+has the native schema and limits. This adds no `/v1beta/decisions` route
+to magpie itself.
 
 ### Google Vertex AI
 
